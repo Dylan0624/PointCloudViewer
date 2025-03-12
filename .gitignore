@@ -1,51 +1,87 @@
-<<<<<<< HEAD
-# Gradle files
+# **Gradle 相關**
 .gradle/
 build/
+*.gradle
+.gradle-cache/
 
-# Local configuration file (sdk path, etc)
+# **本地環境設定**
 local.properties
+/.idea/workspace.xml
+/.idea/tasks.xml
+/.idea/gradle.xml
+/.idea/dictionaries/
+/.idea/libraries/
 
-# Log/OS Files
-*.log
-
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.apk
-output.json
-
-# IntelliJ
+# **Android Studio 相關**
 *.iml
 .idea/
 misc.xml
 deploymentTargetDropDown.xml
 render.experimental.xml
+/.cxx/
+/.externalNativeBuild/
 
-# Keystore files
+# **產生的 APK / AAB 文件**
+*.apk
+*.aab
+output.json
+
+# **Log 檔案**
+*.log
+
+# **Keystore 檔案**
 *.jks
 *.keystore
 
-# Google Services (e.g. APIs or Firebase)
+# **Firebase / Google 服務**
 google-services.json
+app/google-services.json
+app/src/debug/google-services.json
+app/src/release/google-services.json
+crashlytics-build.properties
 
-# Android Profiling
+# **Android Profile / Memory Dumps**
 *.hprof
-=======
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+
+# **系統產生的無用文件**
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
->>>>>>> d500d6e (Initial commit for main)
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# **Mac 系統特殊文件**
+._*
+.Spotlight-V100
+.Trashes
+
+# **Windows 系統特殊文件**
+$RECYCLE.BIN/
+
+# **Linux 系統特殊文件**
+*~
+.nfs*
+
+# **NPM / Node.js 相關**
+node_modules/
+yarn.lock
+package-lock.json
+
+# **JetBrains IDEs 相關**
+.idea/
+*.iws
+*.ipr
+*.iiml
+
+# **快取與中間文件**
+.vscode/
+*.swp
+*.swo
+*.bak
+
+# **NDK (Native Development Kit) 相關**
+*.so
+*.o
+*.obj
+
+# **CMake 產生的文件**
+CMakeLists.txt.user
