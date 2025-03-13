@@ -1,0 +1,3 @@
+/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/armeabi-v7a/CMakeFiles/rebuild_cache.dir
+/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/armeabi-v7a/CMakeFiles/edit_cache.dir
+/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/armeabi-v7a/CMakeFiles/udp_receiver_node.dir

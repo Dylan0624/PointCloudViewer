@@ -1,0 +1,20 @@
+                        -H/home/dylan/桌面/android_app/StellarApp/app/src/main/cpp
+-DCMAKE_SYSTEM_NAME=Android
+-DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+-DCMAKE_SYSTEM_VERSION=24
+-DANDROID_PLATFORM=android-24
+-DANDROID_ABI=x86
+-DCMAKE_ANDROID_ARCH_ABI=x86
+-DANDROID_NDK=/home/dylan/Android/Sdk/ndk/27.0.12077973
+-DCMAKE_ANDROID_NDK=/home/dylan/Android/Sdk/ndk/27.0.12077973
+-DCMAKE_TOOLCHAIN_FILE=/home/dylan/Android/Sdk/ndk/27.0.12077973/build/cmake/android.toolchain.cmake
+-DCMAKE_MAKE_PROGRAM=/home/dylan/Android/Sdk/cmake/3.18.1/bin/ninja
+-DCMAKE_CXX_FLAGS=-std=c++17
+-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/home/dylan/桌面/android_app/StellarApp/app/build/intermediates/cxx/Debug/4u403b48/obj/x86
+-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/home/dylan/桌面/android_app/StellarApp/app/build/intermediates/cxx/Debug/4u403b48/obj/x86
+-DCMAKE_BUILD_TYPE=Debug
+-B/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/x86
+-GNinja
+-DANDROID_STL=c++_shared
+                        Build command args: []
+                        Version: 2

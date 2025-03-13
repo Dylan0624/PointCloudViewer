@@ -1,0 +1,3 @@
+# ninja log v5
+0	12	1741834054	CMakeFiles/udp_receiver_node.dir/udp_receiver_node.cpp.o	b2adeb115deb20ec
+12	31	1741834054	/home/dylan/桌面/android_app/StellarApp/app/build/intermediates/cxx/Debug/4u403b48/obj/arm64-v8a/libudp_receiver_node.so	26249d9a24ba0408

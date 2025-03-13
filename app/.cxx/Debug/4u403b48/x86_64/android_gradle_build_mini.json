@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "/home/dylan/桌面/android_app/StellarApp/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/home/dylan/Android/Sdk/cmake/3.18.1/bin/ninja",
+      "-C",
+      "/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/x86_64",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/home/dylan/Android/Sdk/cmake/3.18.1/bin/ninja",
+    "-C",
+    "/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/x86_64",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "udp_receiver_node::@6890427a1f51a3e7e1df": {
+      "artifactName": "udp_receiver_node",
+      "abi": "x86_64",
+      "output": "/home/dylan/桌面/android_app/StellarApp/app/build/intermediates/cxx/Debug/4u403b48/obj/x86_64/libudp_receiver_node.so",
+      "runtimeFiles": []
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/home/dylan/桌面/android_app/StellarApp/app/.cxx/Debug/4u403b48/x86_64",
+  "command": "/home/dylan/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=x86_64-none-linux-android24 --sysroot=/home/dylan/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dudp_receiver_node_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -std=c++17 -fno-limit-debug-info  -fPIC -o CMakeFiles/udp_receiver_node.dir/udp_receiver_node.cpp.o -c /home/dylan/桌面/android_app/StellarApp/app/src/main/cpp/udp_receiver_node.cpp",
+  "file": "/home/dylan/桌面/android_app/StellarApp/app/src/main/cpp/udp_receiver_node.cpp"
+}
+]

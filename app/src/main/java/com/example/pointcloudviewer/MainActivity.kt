@@ -21,6 +21,11 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+
+        // 載入共享庫
+        init {
+            System.loadLibrary("udp_receiver_node")
+        }
     }
 
     @SuppressLint("WrongConstant")
@@ -98,10 +103,14 @@ class MainActivity : AppCompatActivity() {
         // 啟動 UDP 監聽（永不停止）
         UDPManager.initialize(glSurfaceView, renderer) { mbPerSecond ->
             runOnUiThread { dataRateTextView.text = "資料速率: %.2f MB/s".format(mbPerSecond) }
-        }
+        } 
 
         // 啟動點雲更新
         viewManager.startPointUpdates()
+//
+//        // 測試 JNI 調用
+//        val testResult = testNativeCall()
+//        Log.i(TAG, "JNI Test Result: $testResult")
     }
 
     override fun onPause() {
@@ -122,4 +131,7 @@ class MainActivity : AppCompatActivity() {
         // 不停止 UDPManager，讓它繼續運行
         Log.i(TAG, "Activity destroyed")
     }
+
+//    // JNI Native 方法聲明
+//    private external fun testNativeCall(): Int
 }
