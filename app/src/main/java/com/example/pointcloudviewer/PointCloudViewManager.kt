@@ -2,8 +2,6 @@ package com.example.pointcloudviewer
 
 import android.content.Context
 import android.opengl.GLSurfaceView
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -21,12 +19,10 @@ class PointCloudViewManager(
         private const val TAG = "PointCloudViewManager"
     }
 
-    private val updateHandler = Handler(Looper.getMainLooper())
-    private var isUpdating = false
     private val executor = Executors.newSingleThreadExecutor()
-    private var lastUpdateTime = 0L
     private lateinit var gestureDetector: GestureDetector
     private lateinit var scaleGestureDetector: ScaleGestureDetector
+    private var isUsingSimulatedData = false
 
     init {
         setupGLSurfaceView()
@@ -37,7 +33,6 @@ class PointCloudViewManager(
         glSurfaceView.setEGLContextClientVersion(2)
         glSurfaceView.setRenderer(renderer)
         glSurfaceView.renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
-
         glSurfaceView.setOnTouchListener { _, event ->
             val scaleHandled = scaleGestureDetector.onTouchEvent(event)
             val gestureHandled = gestureDetector.onTouchEvent(event)
@@ -99,53 +94,33 @@ class PointCloudViewManager(
         })
     }
 
-    fun startPointUpdates() {
-        updateHandler.postDelayed({
-            isUpdating = true
-            updatePoints()
-            Log.i(TAG, "Point updates started after 2s delay")
-        }, 2000)
+    fun startSimulatedData() {
+        if (!isUsingSimulatedData) {
+            isUsingSimulatedData = true
+            Log.i(TAG, "沒有 UDP 數據，使用模擬數據")
+            executor.execute {
+                val points = renderer.generateSimulatedPointsBatch()
+                glSurfaceView.queueEvent { renderer.updatePoints(points) }
+            }
+        }
     }
 
-    private fun updatePoints() {
-        updateHandler.post(object : Runnable {
-            override fun run() {
-                if (isUpdating) {
-                    val currentTime = System.currentTimeMillis()
-                    if (lastUpdateTime > 0) {
-                        val deltaTime = currentTime - lastUpdateTime
-                        val fps = 1000f / deltaTime
-                        Log.d(TAG, "FPS: %.1f".format(fps))
-                    }
-                    lastUpdateTime = currentTime
-
-                    executor.execute {
-                        val startTime = System.currentTimeMillis()
-                        val points = renderer.generateSimulatedPointsBatch()
-                        val genTime = System.currentTimeMillis() - startTime
-                        Log.d(TAG, "Point generation took: ${genTime}ms")
-                        glSurfaceView.queueEvent { renderer.updatePoints(points) }
-                    }
-                    updateHandler.postDelayed(this, 33)
-                }
-            }
-        })
+    fun stopSimulatedData() {
+        if (isUsingSimulatedData) {
+            isUsingSimulatedData = false
+            Log.i(TAG, "收到 UDP 數據，切換到真實數據")
+        }
     }
 
     fun pause() {
         glSurfaceView.onPause()
-        isUpdating = false
-        updateHandler.removeCallbacksAndMessages(null)
     }
 
     fun resume() {
         glSurfaceView.onResume()
-        if (!isUpdating) startPointUpdates()
     }
 
     fun destroy() {
-        isUpdating = false
-        updateHandler.removeCallbacksAndMessages(null)
         executor.shutdown()
     }
 }

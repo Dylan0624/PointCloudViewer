@@ -14,7 +14,6 @@ import kotlin.math.sin
 
 class PointCloudRenderer : GLSurfaceView.Renderer {
     private val maxPoints = 850000
-    private val pointsPerUpdate = 850000
     private val floatsPerPoint = 7
     var displayRatio: Float = 1.0f
     private val pointData = FloatArray(maxPoints * floatsPerPoint)
@@ -51,6 +50,9 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     companion object {
         private const val TAG = "PointCloudRenderer"
+        private const val INITIAL_SIZE = 1000f    // 初始大小 1000x1000
+        private const val MIN_SIZE = 1f          // 最小縮放 1x1
+        private const val MAX_SIZE = 10000f      // 最大縮放 10000x10000
     }
 
     private val axisVertices = floatArrayOf(
@@ -85,14 +87,12 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         varying vec3 vColor;
         varying float vDepth;
         uniform int uColorMode;
-        uniform float uIntensityThreshold; // 新增的 uniform
+        uniform float uIntensityThreshold;
         
         void main() {
-            // 根據強度過濾點
             if(vIntensity < uIntensityThreshold) {
                 discard;
             }
-            
             if(uColorMode == 0) {
                 float normalizedIntensity = clamp(vIntensity / 255.0, 0.0, 1.0);
                 vec3 intensityColor = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), normalizedIntensity);
@@ -109,7 +109,6 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
                 gl_FragColor = vec4(1.0);
             }
         }
-
     """.trimIndent()
 
     private val axisVertexShaderCodeStr = """
@@ -151,6 +150,7 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     """.trimIndent()
 
     fun generateSimulatedPointsBatch(): FloatArray {
+        val pointsPerUpdate = 850000
         val batch = FloatArray(pointsPerUpdate * floatsPerPoint)
         val rings = 32
         val pointsPerRing = pointsPerUpdate / rings
@@ -185,35 +185,40 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     fun updatePoints(newBatch: FloatArray) {
         if (!isInitialized) return
         val startTime = System.currentTimeMillis()
+
+        val incomingPoints = newBatch.size / floatsPerPoint
+        if (incomingPoints == 0) return
+
         if (numPoints < maxPoints) {
             val available = maxPoints - numPoints
-            if (pointsPerUpdate <= available) {
-                val startPos = numPoints * floatsPerPoint
-                System.arraycopy(newBatch, 0, pointData, startPos, newBatch.size)
-                numPoints += pointsPerUpdate
-            } else {
-                val toAdd = available
-                val startPos = numPoints * floatsPerPoint
-                System.arraycopy(newBatch, 0, pointData, startPos, toAdd * floatsPerPoint)
-                numPoints = maxPoints
-                val remaining = pointsPerUpdate - toAdd
+            val pointsToAdd = minOf(incomingPoints, available)
+            val floatsToCopy = pointsToAdd * floatsPerPoint
+            val startPos = numPoints * floatsPerPoint
+            System.arraycopy(newBatch, 0, pointData, startPos, floatsToCopy)
+            numPoints += pointsToAdd
+
+            if (pointsToAdd < incomingPoints) {
+                val remaining = incomingPoints - pointsToAdd
                 for (i in 0 until remaining) {
                     val idx = (startPoint + i) % maxPoints
-                    System.arraycopy(newBatch, (toAdd + i) * floatsPerPoint, pointData, idx * floatsPerPoint, floatsPerPoint)
+                    System.arraycopy(newBatch, (pointsToAdd + i) * floatsPerPoint, pointData, idx * floatsPerPoint, floatsPerPoint)
                 }
                 startPoint = (startPoint + remaining) % maxPoints
+                numPoints = maxPoints
             }
         } else {
-            for (i in 0 until pointsPerUpdate) {
+            val pointsToAdd = minOf(incomingPoints, maxPoints)
+            for (i in 0 until pointsToAdd) {
                 val idx = (startPoint + i) % maxPoints
                 System.arraycopy(newBatch, i * floatsPerPoint, pointData, idx * floatsPerPoint, floatsPerPoint)
             }
-            startPoint = (startPoint + pointsPerUpdate) % maxPoints
+            startPoint = (startPoint + pointsToAdd) % maxPoints
         }
+
         updateVertexBuffer()
         isReadyToRender = true
         val updateTime = System.currentTimeMillis() - startTime
-        Log.d(TAG, "Point update took: ${updateTime}ms, numPoints: $numPoints")
+        Log.d(TAG, "Point update took: ${updateTime}ms, numPoints: $numPoints, incomingPoints: $incomingPoints")
     }
 
     private fun updateVertexBuffer() {
@@ -244,7 +249,13 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         val ratio = width.toFloat() / height.toFloat()
-        Matrix.frustumM(projectionMatrix, 0, -ratio, ratio, -1f, 1f, 1f, 10f)
+        Matrix.frustumM(projectionMatrix, 0,
+            -ratio * INITIAL_SIZE/200f,
+            ratio * INITIAL_SIZE/200f,
+            -INITIAL_SIZE/200f,
+            INITIAL_SIZE/200f,
+            1f,
+            100f)
         Log.i(TAG, "Surface changed: width=$width, height=$height")
     }
 
@@ -252,19 +263,16 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         if (!isInitialized) return
         val startTime = System.currentTimeMillis()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-        Matrix.setLookAtM(viewMatrix, 0, 0f, 0f, 5f, 0f, 0f, 0f, 0f, 1f, 0f)
-
+        Matrix.setLookAtM(viewMatrix, 0, 0f, 0f, 10f, 0f, 0f, 0f, 0f, 1f, 0f)
         val tempMatrix = FloatArray(16)
         Matrix.multiplyMM(tempMatrix, 0, viewMatrix, 0, cameraController.getModelMatrix(), 0)
         Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, tempMatrix, 0)
-
         synchronized(mvpLock) {
             System.arraycopy(mvpMatrix, 0, latestMvpMatrix, 0, 16)
         }
         if (showGrid) drawGrid()
         if (isReadyToRender) drawPointCloud()
         if (showAxis) drawAxis()
-
         val frameTime = System.currentTimeMillis() - startTime
         if (frameTime > 16) {
             Log.w(TAG, "Frame render took: ${frameTime}ms")
@@ -275,41 +283,30 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         GLES20.glUseProgram(program)
         val matrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
         GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mvpMatrix, 0)
-
-        // 設定色彩模式
         val colorModeHandle = GLES20.glGetUniformLocation(program, "uColorMode")
         GLES20.glUniform1i(colorModeHandle, currentColorMode)
-
-        // 設定強度過濾閥值，displayRatio 越低，閥值越高
         val thresholdHandle = GLES20.glGetUniformLocation(program, "uIntensityThreshold")
         GLES20.glUniform1f(thresholdHandle, (1 - displayRatio) * 255f)
-
         vertexBuffer?.let { buffer ->
             val stride = pointVertexSize * BYTES_PER_FLOAT
             val posHandle = GLES20.glGetAttribLocation(program, "aPosition")
             buffer.position(0)
             GLES20.glEnableVertexAttribArray(posHandle)
             GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, stride, buffer)
-
             val intensityHandle = GLES20.glGetAttribLocation(program, "aIntensity")
             buffer.position(3)
             GLES20.glEnableVertexAttribArray(intensityHandle)
             GLES20.glVertexAttribPointer(intensityHandle, 1, GLES20.GL_FLOAT, false, stride, buffer)
-
             val colorHandle = GLES20.glGetAttribLocation(program, "aColor")
             buffer.position(4)
             GLES20.glEnableVertexAttribArray(colorHandle)
             GLES20.glVertexAttribPointer(colorHandle, 3, GLES20.GL_FLOAT, false, stride, buffer)
-
-            // 繪製全部點，shader 內部會依照強度 discard 低強度的點
             GLES20.glDrawArrays(GLES20.GL_POINTS, 0, numPoints)
-
             GLES20.glDisableVertexAttribArray(posHandle)
             GLES20.glDisableVertexAttribArray(intensityHandle)
             GLES20.glDisableVertexAttribArray(colorHandle)
         }
     }
-
 
     private fun drawAxis() {
         GLES20.glUseProgram(axisProgram)
@@ -409,9 +406,10 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     }
 
     private fun generateGridVertices(): FloatArray {
-        val gridMin = -100f
-        val gridMax = 100f
-        val step = 1f
+        val gridMin = -MAX_SIZE / 2f    // -5000
+        val gridMax = MAX_SIZE / 2f     // 5000
+        val step = INITIAL_SIZE / 10f   // 初始網格間距為 100
+
         val lines = mutableListOf<Float>()
         var x = gridMin
         while (x <= gridMax) {
@@ -440,6 +438,58 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         gridBuffer = bb.asFloatBuffer()
         gridBuffer.put(gridVerts)
         gridBuffer.position(0)
+    }
+
+    inner class CameraController {
+        private val modelMatrix = FloatArray(16)
+        private var scaleFactor = INITIAL_SIZE / 200f  // 初始縮放使顯示1000x1000
+        private var rotationX = 0f
+        private var rotationY = 0f
+        private var translateX = 0f
+        private var translateY = 0f
+
+        init {
+            Matrix.setIdentityM(modelMatrix, 0)
+        }
+
+        fun getModelMatrix(): FloatArray {
+            val tempMatrix = FloatArray(16)
+            Matrix.setIdentityM(tempMatrix, 0)
+
+            Matrix.translateM(tempMatrix, 0, translateX, translateY, 0f)
+            Matrix.rotateM(tempMatrix, 0, rotationX, 1f, 0f, 0f)
+            Matrix.rotateM(tempMatrix, 0, rotationY, 0f, 1f, 0f)
+            Matrix.scaleM(tempMatrix, 0, scaleFactor, scaleFactor, scaleFactor)
+
+            return tempMatrix
+        }
+
+        fun rotate(dx: Float, dy: Float) {
+            rotationY += dx * 0.5f
+            rotationX += dy * 0.5f
+            rotationX = rotationX.coerceIn(-90f, 90f)
+        }
+
+        fun scale(factor: Float) {
+            val newScale = (scaleFactor * factor).coerceIn(
+                MIN_SIZE / 200f,  // 最小縮放到 1x1
+                MAX_SIZE / 200f   // 最大縮放到 10000x10000
+            )
+            scaleFactor = newScale
+        }
+
+        fun translate(dx: Float, dy: Float) {
+            translateX += dx * 0.01f / scaleFactor
+            translateY -= dy * 0.01f / scaleFactor
+        }
+
+        fun resetView() {
+            scaleFactor = INITIAL_SIZE / 200f
+            rotationX = 0f
+            rotationY = 0f
+            translateX = 0f
+            translateY = 0f
+        }
     }
 
     fun rotate(dx: Float, dy: Float) = cameraController.rotate(dx, dy)

@@ -21,8 +21,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-
-        // 載入共享庫
         init {
             System.loadLibrary("udp_receiver_node")
         }
@@ -96,21 +94,21 @@ class MainActivity : AppCompatActivity() {
         // 初始化管理器
         viewManager = PointCloudViewManager(this, glSurfaceView, renderer, pointDetailTextView)
         drawerMenuManager = DrawerMenuManager(this, drawerLayout, renderer, legendView)
-
-        // 設置抽屜菜單
         drawerMenuManager.setupDrawer()
 
-        // 啟動 UDP 監聽（永不停止）
+        // 啟動 UDP 監聽並根據流量切換數據源
         UDPManager.initialize(glSurfaceView, renderer) { mbPerSecond ->
-            runOnUiThread { dataRateTextView.text = "資料速率: %.2f MB/s".format(mbPerSecond) }
-        } 
-
-        // 啟動點雲更新
-        viewManager.startPointUpdates()
-//
-//        // 測試 JNI 調用
-//        val testResult = testNativeCall()
-//        Log.i(TAG, "JNI Test Result: $testResult")
+            runOnUiThread {
+                dataRateTextView.text = "資料速率: %.2f MB/s".format(mbPerSecond)
+                if (mbPerSecond > 0) {
+                    // 有流量，等待 UDPManager 收集完整幀後渲染
+                    viewManager.stopSimulatedData()
+                } else {
+                    // 完全無流量，使用模擬數據
+                    viewManager.startSimulatedData()
+                }
+            }
+        }
     }
 
     override fun onPause() {
@@ -128,10 +126,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         viewManager.destroy()
-        // 不停止 UDPManager，讓它繼續運行
         Log.i(TAG, "Activity destroyed")
     }
-
-//    // JNI Native 方法聲明
-//    private external fun testNativeCall(): Int
 }
