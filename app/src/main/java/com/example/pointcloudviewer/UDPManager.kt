@@ -4,11 +4,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.opengl.GLSurfaceView
 import android.util.Log
-import com.example.pointcloudviewer.UDPManager.LidarConstants.LOOKUP_TABLE
 import kotlinx.coroutines.*
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.ArrayList
 import kotlin.math.cos
@@ -20,8 +20,9 @@ object UDPManager {
     private const val UDP_PORT = 7000
     private const val SOCKET_BUFFER_SIZE = 64 * 1024 * 1024
     private const val PACKET_BUFFER_SIZE = 65535
-    private const val MAX_QUEUE_SIZE = 10000
-    private const val REDUCED_QUEUE_SIZE = 5000
+    private const val MAX_QUEUE_SIZE = 100000
+    private const val FRAME_MARKER_INTERVAL = 1000
+    private var onStatusUpdate: ((String) -> Unit)? = null
 
     object LidarConstants {
         const val HEADER_SIZE = 32
@@ -41,7 +42,18 @@ object UDPManager {
         const val PACKET_LOWER = 0x20.toByte()
         const val ECHO_1ST = 0x01.toByte()
         const val ECHO_2ND = 0x02.toByte()
-        lateinit var LOOKUP_TABLE: IntArray
+        var LOOKUP_TABLE = intArrayOf(1454, 1459, 1463, 1468, 1472)
+    }
+
+    // 定义帧边界检测的常量 - 更精确的阈值
+    private const val START_AZIMUTH_THRESHOLD = 2.0f    // 起始角度阈值（度）- 更精确
+    private const val END_AZIMUTH_THRESHOLD = 358.0f    // 结束角度阈值（度）- 更精确
+    private const val AZIMUTH_JUMP_LOWER = 60.0f        // 角度跳变下限
+    private const val AZIMUTH_JUMP_UPPER = 300.0f       // 角度跳变上限
+    private const val MIN_VALID_POINTS_RATIO = 0.5f     // 最小有效点比率
+
+    private object FrameMarker {
+        val BYTES = byteArrayOf(0x00, 0x00, 0x00, 0x00)
     }
 
     data class LidarPoint(
@@ -68,16 +80,45 @@ object UDPManager {
     private val totalPacketsReceived = AtomicLong(0)
     private val bytesInLastSecond = AtomicLong(0)
     private val frameLock = Any()
-    private val packetBufferPool = Array(64) { ByteArray(PACKET_BUFFER_SIZE) }
-    private var bufferPoolIndex = 0
+    private val isFrameReady = AtomicBoolean(false)
     private val pointsBuffer = ArrayList<LidarPoint>()
     private val framePointsBuffer = ArrayList<LidarPoint>()
+    private val latestCompleteFrame = ArrayList<LidarPoint>()
+    private val nextFrame = ArrayList<LidarPoint>()
+    private var packetCounter = 0
+
+    // 帧边界跟踪变量
+    private var foundFrameStart = false
+    private var foundFrameEnd = false
+    private var currentLineAzimuth = 0.0f
+    private var previousLineAzimuth = 0.0f
+    private var azimuthJumpDetected = false
+    private var frameStartTimestamp = 0L
+    private var frameEndTimestamp = 0L
+    private var frameCompletionTimes = ArrayList<Long>()
+
+    // 点云质量监控
+    private var currentLinePointCount = 0
+    private var previousLinePointCount = 0
+    private var consecutiveEmptyLines = 0
+    private var totalPointsInFrame = 0
+
+    // 帧统计变量
+    private var completeFrameCount = 0
+    private var incompleteFrameCount = 0
+    private var avgFrameCompletionTime = 0L
+    private var minAzimuthInFrame = 360.0f
+    private var maxAzimuthInFrame = 0.0f
 
     private var glSurfaceView: GLSurfaceView? = null
     private var renderer: PointCloudRenderer? = null
     private var onDataRateUpdate: ((Double) -> Unit)? = null
     private var echoMode = EchoMode.ECHO_MODE_ALL
     private var context: Context? = null
+    private var isRendering = AtomicBoolean(false)
+    private var validPacketsCount = 0
+    private var invalidPacketsCount = 0
+    private var processedPacketsCount = 0
 
     private fun loadLookupTableFromResource(context: Context) {
         try {
@@ -87,24 +128,34 @@ object UDPManager {
             val text = inputStream.bufferedReader().use { it.readText() }
             val values = text.split(",").map { it.trim().toInt() }
             LidarConstants.LOOKUP_TABLE = values.toIntArray()
-            log("成功從資源文件載入查找表，大小: ${LidarConstants.LOOKUP_TABLE.size}")
+            log("Successfully loaded lookup table, size: ${LidarConstants.LOOKUP_TABLE.size}")
         } catch (e: Exception) {
-            log("無法載入查找表: ${e.message}")
-            LidarConstants.LOOKUP_TABLE = intArrayOf(1454, 1459, 1463, 1468, 1472)
-            log("使用預設查找表")
+            log("Failed to load lookup table: ${e.message}")
+            LidarConstants.LOOKUP_TABLE = IntArray(8192) { it * 10 }
+            log("Using default lookup table")
         }
     }
 
-    fun initialize(glSurfaceView: GLSurfaceView, renderer: PointCloudRenderer, onDataRateUpdate: (Double) -> Unit) {
+    fun initialize(
+        glSurfaceView: GLSurfaceView?,
+        renderer: PointCloudRenderer?,
+        onDataRateUpdate: (Double) -> Unit,
+        onStatusUpdate: ((String) -> Unit)? = null
+    ) {
         this.glSurfaceView = glSurfaceView
         this.renderer = renderer
         this.onDataRateUpdate = onDataRateUpdate
-        this.context = glSurfaceView.context
+        this.onStatusUpdate = onStatusUpdate
+        context = glSurfaceView?.context
         context?.let { loadLookupTableFromResource(it) }
         if (udpJob == null || processingJob == null) {
-            log("啟動 UDP 監聽")
+            log("Starting UDP listening")
             udpJob = startUdpReceiver()
             processingJob = startPacketProcessor()
+            CoroutineScope(Dispatchers.Default).launch {
+                startFrameChecker()
+            }
+            onStatusUpdate?.invoke("UDP Manager Initialized with improved azimuth detection")
         }
     }
 
@@ -116,17 +167,11 @@ object UDPManager {
     private fun startUdpReceiver(): Job {
         return CoroutineScope(Dispatchers.IO).launch {
             try {
-                log("手機作為主機，開始監聽 UDP 端口 $UDP_PORT")
+                log("Device as host, starting UDP listen on port $UDP_PORT")
                 val socket = DatagramSocket(UDP_PORT).apply {
                     reuseAddress = true
                     broadcast = true
-                    try {
-                        receiveBufferSize = SOCKET_BUFFER_SIZE
-                        log("已設置 Socket 接收緩衝區大小: $receiveBufferSize bytes")
-                    } catch (e: Exception) {
-                        log("警告: 無法設置請求的緩衝區大小: ${e.message}")
-                        log("當前緩衝區大小: $receiveBufferSize bytes")
-                    }
+                    receiveBufferSize = SOCKET_BUFFER_SIZE
                 }
                 val speedMonitorJob = launch {
                     var lastUpdateTime = System.nanoTime()
@@ -136,8 +181,10 @@ object UDPManager {
                         val elapsedSeconds = (currentTime - lastUpdateTime) / 1_000_000_000.0
                         val bytesReceived = bytesInLastSecond.getAndSet(0)
                         val speedMBps = bytesReceived / (1024.0 * 1024.0) / elapsedSeconds
+                        val packetStats = "Valid: $validPacketsCount, Invalid: $invalidPacketsCount predstCount: $processedPacketsCount"
                         withContext(Dispatchers.Main) {
                             onDataRateUpdate?.invoke(speedMBps)
+                            onStatusUpdate?.invoke("Packet stats: $packetStats")
                         }
                         lastUpdateTime = currentTime
                     }
@@ -145,40 +192,88 @@ object UDPManager {
                 try {
                     val receiveBuffer = ByteArray(PACKET_BUFFER_SIZE)
                     val receivePacket = DatagramPacket(receiveBuffer, receiveBuffer.size)
+                    var droppedPairs = 0 // 记录丢弃的数据包对数
+                    val packetPair = arrayOfNulls<ByteArray>(2) // 临时存储一对数据包
+                    var pairIndex = 0 // 0 表示等待上层，1 表示等待下层
+
                     while (isActive) {
-                        try {
-                            socket.receive(receivePacket)
-                            val dataLength = receivePacket.length
-                            val bufferIndex = synchronized(packetBufferPool) {
-                                val index = bufferPoolIndex
-                                bufferPoolIndex = (bufferPoolIndex + 1) % packetBufferPool.size
-                                index
-                            }
-                            val actualData = packetBufferPool[bufferIndex]
-                            System.arraycopy(receiveBuffer, 0, actualData, 0, dataLength)
-                            totalBytesReceived.addAndGet(dataLength.toLong())
-                            bytesInLastSecond.addAndGet(dataLength.toLong())
-                            totalPacketsReceived.incrementAndGet()
-                            packetQueue.offer(actualData)
-                            if (packetQueue.size > MAX_QUEUE_SIZE) {
-                                log("警告: 隊列過大 (${packetQueue.size})，丟棄舊數據")
-                                while (packetQueue.size > REDUCED_QUEUE_SIZE) {
-                                    packetQueue.poll()
+                        socket.receive(receivePacket)
+                        val dataLength = receivePacket.length
+                        val actualData = ByteArray(dataLength)
+                        System.arraycopy(receiveBuffer, 0, actualData, 0, dataLength)
+
+                        totalBytesReceived.addAndGet(dataLength.toLong())
+                        bytesInLastSecond.addAndGet(dataLength.toLong())
+                        totalPacketsReceived.incrementAndGet()
+
+                        // 检查数据包类型
+                        val packetType = if (dataLength == LidarConstants.PACKET_SIZE) {
+                            (actualData[LidarConstants.DATA_START_OFFSET + 1].toInt() and 0xF0).toByte()
+                        } else {
+                            null
+                        }
+
+                        when (packetType) {
+                            LidarConstants.PACKET_UPPER -> {
+                                if (pairIndex == 0) {
+                                    packetPair[0] = actualData
+                                    pairIndex = 1
+                                } else {
+                                    // 上层数据包已存在，丢弃旧的并重新开始
+                                    packetPair[0] = actualData
+                                    pairIndex = 1
                                 }
                             }
-                            receivePacket.setLength(receiveBuffer.size)
-                        } catch (e: Exception) {
-                            log("接收數據時出錯: ${e.message}")
-                            delay(1000)
+                            LidarConstants.PACKET_LOWER -> {
+                                if (pairIndex == 1 && packetPair[0] != null) {
+                                    packetPair[1] = actualData
+                                    // 收到一对数据包，加入队列
+                                    packetQueue.offer(packetPair[0]!!)
+                                    packetQueue.offer(packetPair[1]!!)
+                                    pairIndex = 0
+                                    packetCounter++
+                                    if (packetCounter >= FRAME_MARKER_INTERVAL) {
+                                        packetCounter = 0
+                                        packetQueue.offer(FrameMarker.BYTES)
+                                    }
+                                } else {
+                                    // 没有匹配的上层数据包，丢弃此下层数据包
+                                    pairIndex = 0
+                                }
+                            }
+                            else -> {
+                                // 无效数据包，重置 pairIndex
+                                pairIndex = 0
+                            }
                         }
+
+                        // 改进的丢弃逻辑：成对丢弃
+                        while (packetQueue.size > MAX_QUEUE_SIZE) {
+                            // 每次丢弃 2 个数据包（一条直线）
+                            val first = packetQueue.poll()
+                            val second = packetQueue.poll()
+                            if (first != null && second != null && first !== FrameMarker.BYTES && second !== FrameMarker.BYTES) {
+                                droppedPairs++
+                                log("Dropped a pair of packets (1 line), total dropped pairs: $droppedPairs")
+                            } else if (first === FrameMarker.BYTES) {
+                                // 如果遇到 Frame Marker，只丢弃它，然后继续检查
+                                packetQueue.offer(second) // 把第二个放回去
+                            } else {
+                                // 无法成对丢弃，退出循环等待下次处理
+                                packetQueue.offer(first) // 把第一个放回去
+                                break
+                            }
+                        }
+
+                        receivePacket.setLength(receiveBuffer.size)
                     }
                 } finally {
                     speedMonitorJob.cancel()
                     socket.close()
-                    log("關閉 UDP 監聽，共接收 ${totalPacketsReceived.get()} 個封包，總計 ${totalBytesReceived.get() / (1024 * 1024)} MB")
+                    log("UDP listening closed, received ${totalPacketsReceived.get()} packets")
                 }
             } catch (e: Exception) {
-                log("UDP 監聽失敗: ${e.message}")
+                log("UDP listening failed: ${e.message}")
                 delay(1000)
                 if (isActive) {
                     startUdpReceiver()
@@ -189,42 +284,256 @@ object UDPManager {
 
     private fun startPacketProcessor(): Job {
         return CoroutineScope(Dispatchers.Default).launch {
-            log("啟動數據包處理協程")
-            var gotUpper = false
-            var gotLower = false
-            var lineCount = 0
-            pointsBuffer.clear()
-            framePointsBuffer.clear()
-            framePointsBuffer.ensureCapacity(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME)
+            log("Starting packet processor with improved azimuth detection")
+            nextFrame.clear()
+            nextFrame.ensureCapacity(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME)
+            resetFrameTracking()
+
             while (isActive) {
                 val packet = packetQueue.poll()
                 if (packet == null) {
                     delay(10)
                     continue
                 }
+
+                if (packet === FrameMarker.BYTES) {
+                    // 使用帧标记作为备用机制
+                    checkFrameCompletion(true, "Frame marker")
+                    continue
+                }
+
+                processedPacketsCount++
+                if (packet.size != LidarConstants.PACKET_SIZE || !checkPacketHeader(packet)) {
+                    invalidPacketsCount++
+                    continue
+                }
+
+                validPacketsCount++
                 pointsBuffer.clear()
                 val isUpperPacket = parseUdpPacket(packet, pointsBuffer, echoMode)
-                if (pointsBuffer.isEmpty()) continue
-                if (isUpperPacket) {
-                    gotUpper = true
-                } else {
-                    gotLower = true
-                }
-                if (gotUpper && gotLower) {
-                    framePointsBuffer.addAll(pointsBuffer)
-                    lineCount++
-                    gotUpper = false
-                    gotLower = false
-                    if (lineCount >= LidarConstants.LINES_PER_FRAME) {
-                        log("Frame completed with $lineCount lines, ${framePointsBuffer.size} points")
-                        synchronized(frameLock) {
-                            sendPointsToRenderer()
-                            lineCount = 0
-                            // 不清空 framePointsBuffer，讓它保留直到下一幀到達
+
+                if (pointsBuffer.isNotEmpty()) {
+                    // 使用专门的方法处理方位角跟踪
+                    updateAzimuthTracking(pointsBuffer[0].azimuth, pointsBuffer.size)
+
+                    // 更新帧内的最小和最大方位角
+                    if (foundFrameStart && !foundFrameEnd) {
+                        if (currentLineAzimuth < minAzimuthInFrame) minAzimuthInFrame = currentLineAzimuth
+                        if (currentLineAzimuth > maxAzimuthInFrame) maxAzimuthInFrame = currentLineAzimuth
+                    }
+
+                    // 检查是否为起始点
+                    if (!foundFrameStart && isFrameStart()) {
+                        foundFrameStart = true
+                        frameStartTimestamp = System.currentTimeMillis()
+                        minAzimuthInFrame = currentLineAzimuth
+                        maxAzimuthInFrame = currentLineAzimuth
+                        totalPointsInFrame = 0
+                        log("Frame start detected at azimuth: $currentLineAzimuth with ${pointsBuffer.size} points")
+
+                        // 如果在检测到起始点但已有之前帧的点，则创建新帧
+                        if (nextFrame.isNotEmpty()) {
+                            log("Creating new frame at start boundary, discarding ${nextFrame.size} points")
+                            nextFrame.clear()
                         }
                     }
+
+                    // 将点添加到当前帧
+                    nextFrame.addAll(pointsBuffer)
+                    totalPointsInFrame += pointsBuffer.size
+
+                    // 检查是否为结束点
+                    if (foundFrameStart && !foundFrameEnd && isFrameEnd()) {
+                        foundFrameEnd = true
+                        frameEndTimestamp = System.currentTimeMillis()
+                        val frameTime = frameEndTimestamp - frameStartTimestamp
+                        val azimuthCoverage = maxAzimuthInFrame - minAzimuthInFrame
+                        log("Frame end detected at azimuth: $currentLineAzimuth, frame completed in $frameTime ms")
+                        log("Frame azimuth coverage: $minAzimuthInFrame - $maxAzimuthInFrame (${azimuthCoverage}°)")
+
+                        // 如果找到了起始点和结束点，则表示帧完整
+                        checkFrameCompletion(false, "Natural end")
+                    }
+                } else {
+                    // 连续空行处理
+                    consecutiveEmptyLines++
+                    if (foundFrameStart && consecutiveEmptyLines > 10) {
+                        log("Too many consecutive empty lines ($consecutiveEmptyLines), forcing frame completion")
+                        checkFrameCompletion(true, "Empty lines")
+                    }
+                }
+
+                // 备用机制：如果点数足够多，则认为帧完整
+                val expectedPoints = LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME
+                if (nextFrame.size >= expectedPoints) {
+                    log("Frame size threshold reached with ${nextFrame.size} points (expected $expectedPoints)")
+                    checkFrameCompletion(true, "Size threshold")
+                }
+
+                // 如果帧已经开始但长时间未结束，强制完成
+                if (foundFrameStart && !foundFrameEnd &&
+                    System.currentTimeMillis() - frameStartTimestamp > 1000) {
+                    log("Frame timeout after ${System.currentTimeMillis() - frameStartTimestamp}ms")
+                    checkFrameCompletion(true, "Timeout")
                 }
             }
+        }
+    }
+
+    private fun resetFrameTracking() {
+        foundFrameStart = false
+        foundFrameEnd = false
+        currentLineAzimuth = 0.0f
+        previousLineAzimuth = 0.0f
+        azimuthJumpDetected = false
+        currentLinePointCount = 0
+        previousLinePointCount = 0
+        consecutiveEmptyLines = 0
+        totalPointsInFrame = 0
+        minAzimuthInFrame = 360.0f
+        maxAzimuthInFrame = 0.0f
+    }
+
+    private fun updateAzimuthTracking(currentAzimuth: Float, pointCount: Int) {
+        previousLineAzimuth = currentLineAzimuth
+        previousLinePointCount = currentLinePointCount
+        currentLineAzimuth = currentAzimuth
+        currentLinePointCount = pointCount
+
+        // 检测方位角是否发生了从接近360度到接近0度的跳变
+        // 这是一个完整扫描周期结束的标志
+        if (previousLineAzimuth > AZIMUTH_JUMP_UPPER && currentLineAzimuth < AZIMUTH_JUMP_LOWER) {
+            azimuthJumpDetected = true
+            log("Azimuth cycle detected: $previousLineAzimuth° -> $currentLineAzimuth°")
+
+            // 如果点数正常，这是有效的循环
+            if (currentLinePointCount > LidarConstants.POINTS_PER_PACKET * MIN_VALID_POINTS_RATIO) {
+                log("Valid azimuth cycle with ${currentLinePointCount} points")
+            } else {
+                log("Suspicious azimuth cycle with only ${currentLinePointCount} points")
+            }
+        }
+
+        // 重置连续空行计数
+        if (pointCount > 0) {
+            consecutiveEmptyLines = 0
+        }
+    }
+
+    private fun isFrameStart(): Boolean {
+        // 使用更精细的起始检测逻辑
+        // 1. 检测到方位角非常接近0度（小于2度）- 表示扫描起始
+        // 2. 已经检测到从高角度到低角度的跳变
+        // 3. 确保点数正常（避免噪声影响）
+        val validPointCount = currentLinePointCount > LidarConstants.POINTS_PER_PACKET * MIN_VALID_POINTS_RATIO
+        return (currentLineAzimuth < START_AZIMUTH_THRESHOLD && azimuthJumpDetected && validPointCount)
+    }
+
+    private fun isFrameEnd(): Boolean {
+        // 使用更精细的结束检测逻辑
+        // 1. 检测到方位角非常接近360度（大于358度）- 表示扫描结束
+        // 2. 确保点数正常（避免噪声影响）
+        // 3. 确保帧已经包含了足够的点
+        val validPointCount = currentLinePointCount > LidarConstants.POINTS_PER_PACKET * MIN_VALID_POINTS_RATIO
+        val sufficientFramePoints = totalPointsInFrame > LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME * 0.8
+        return (currentLineAzimuth > END_AZIMUTH_THRESHOLD && validPointCount && sufficientFramePoints)
+    }
+
+    private fun checkFrameCompletion(forcedCompletion: Boolean, reason: String) {
+        val isComplete = foundFrameStart && foundFrameEnd
+        val frameSize = nextFrame.size
+
+        if (isComplete || forcedCompletion) {
+            if (frameSize > 0) {
+                // 计算帧完整度
+                val expectedPoints = LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME
+                val completeness = (frameSize * 100) / expectedPoints
+
+                log("${if (isComplete) "Complete" else "Forced ($reason)"} frame with $frameSize points ($completeness% complete)")
+
+                synchronized(frameLock) {
+                    latestCompleteFrame.clear()
+                    latestCompleteFrame.addAll(nextFrame)
+                    isFrameReady.set(true)
+                    nextFrame.clear()
+                }
+
+                // 计算并更新统计信息
+                if (isComplete) {
+                    completeFrameCount++
+                    val completionTime = frameEndTimestamp - frameStartTimestamp
+                    frameCompletionTimes.add(completionTime)
+                    if (frameCompletionTimes.size > 10) {
+                        frameCompletionTimes.removeAt(0)
+                    }
+                    avgFrameCompletionTime = frameCompletionTimes.average().toLong()
+                } else {
+                    incompleteFrameCount++
+                }
+
+                // 记录统计信息
+                val completionRate = if (completeFrameCount + incompleteFrameCount > 0) {
+                    (completeFrameCount * 100) / (completeFrameCount + incompleteFrameCount)
+                } else 0
+
+                log("Frame stats: Complete: $completeFrameCount, Incomplete: $incompleteFrameCount, " +
+                        "Completion rate: $completionRate%, Avg time: $avgFrameCompletionTime ms")
+            }
+
+            // 为下一帧重置
+            resetFrameTracking()
+        }
+    }
+
+    private suspend fun startFrameChecker() {
+        var lastQueueSize = 0
+        var stallCounter = 0
+
+        while (true) {
+            if (isFrameReady.get()) {
+                isRendering.set(true)
+                sendPointsToRenderer()
+                isFrameReady.set(false)
+                isRendering.set(false)
+            }
+
+            val currentQueueSize = packetQueue.size
+            if (currentQueueSize == lastQueueSize && currentQueueSize > 0) {
+                stallCounter++
+                if (stallCounter > 20) {
+                    log("Force creating a frame after stall")
+                    checkFrameCompletion(true, "Queue stall")  // 使用帧完成检查功能
+                    stallCounter = 0
+                }
+            } else {
+                stallCounter = 0
+            }
+
+            lastQueueSize = currentQueueSize
+            val pointsCollected = nextFrame.size
+
+            // 增强状态更新，包含帧完整性信息
+            val frameStatus = if (foundFrameStart && !foundFrameEnd) {
+                "Partial frame (started)"
+            } else if (!foundFrameStart && !foundFrameEnd) {
+                "Collecting points"
+            } else {
+                "Frame complete"
+            }
+
+            val completionRate = if (completeFrameCount + incompleteFrameCount > 0) {
+                (completeFrameCount * 100) / (completeFrameCount + incompleteFrameCount)
+            } else 0
+
+            val azimuthInfo = if (foundFrameStart) {
+                ", Azimuth: $minAzimuthInFrame° - $currentLineAzimuth°"
+            } else {
+                ", Current azimuth: $currentLineAzimuth°"
+            }
+
+            onStatusUpdate?.invoke("Packets: $currentQueueSize, Points: $pointsCollected$azimuthInfo\n" +
+                    "Frame: $frameStatus, Completion: $completionRate%")
+            delay(250)
         }
     }
 
@@ -237,102 +546,127 @@ object UDPManager {
     }
 
     private fun parseUdpPacket(data: ByteArray, points: MutableList<LidarPoint>, echoMode: EchoMode): Boolean {
-        if (!checkPacketHeader(data)) return false
-        val returnSeq = data[LidarConstants.DATA_START_OFFSET + 1].toUByte()
-        val packetType = (returnSeq.toInt() and 0xF0).toByte()
-        val echoNum = (returnSeq.toInt() and 0x0F).toByte()
+        val returnSeq = data[LidarConstants.DATA_START_OFFSET + 1].toInt() and 0xFF
+        val packetType = (returnSeq and 0xF0).toByte()
+        val echoNum = (returnSeq and 0x0F).toByte()
+
         when (echoMode) {
             EchoMode.ECHO_MODE_1ST -> if (echoNum != LidarConstants.ECHO_1ST) return false
             EchoMode.ECHO_MODE_2ND -> if (echoNum != LidarConstants.ECHO_2ND) return false
             else -> {}
         }
+
         if (packetType != LidarConstants.PACKET_UPPER && packetType != LidarConstants.PACKET_LOWER) return false
         val isUpperPacket = packetType == LidarConstants.PACKET_UPPER
-        val azimuthRaw = ((data[LidarConstants.DATA_START_OFFSET + 3].toInt() and 0xFF) shl 8) or
-                (data[LidarConstants.DATA_START_OFFSET + 2].toInt() and 0xFF)
-        try {
-            val lookupTable = LidarConstants.LOOKUP_TABLE
-            val index = azimuthRaw % lookupTable.size
-            val azimuth = lookupTable[index] / 100.0f
-            val radAzimuth = Math.toRadians(azimuth.toDouble()).toFloat()
-            val cosAzimuth = cos(radAzimuth)
-            val sinAzimuth = sin(radAzimuth)
-            val elevationStart = if (isUpperPacket) LidarConstants.ELEVATION_START_UPPER else LidarConstants.ELEVATION_START_LOWER
-            val expectedPoints = when (echoMode) {
-                EchoMode.ECHO_MODE_ALL -> LidarConstants.POINTS_PER_PACKET
-                EchoMode.ECHO_MODE_1ST, EchoMode.ECHO_MODE_2ND -> {
-                    if ((echoMode == EchoMode.ECHO_MODE_1ST && echoNum == LidarConstants.ECHO_1ST) ||
-                        (echoMode == EchoMode.ECHO_MODE_2ND && echoNum == LidarConstants.ECHO_2ND)) {
-                        LidarConstants.POINTS_PER_PACKET
-                    } else 0
-                }
-            }
-            if (expectedPoints == 0) return false
-            val pointStart = LidarConstants.DATA_START_OFFSET + 4
-            points.ensureCapacity(points.size + expectedPoints)
-            for (i in 0 until LidarConstants.POINTS_PER_PACKET) {
-                val dataOffset = pointStart + (i * 3)
-                val intensity = (data[dataOffset].toInt() and 0xFF).toFloat()
-                val radius = ((data[dataOffset + 2].toInt() and 0xFF) shl 8) or
-                        (data[dataOffset + 1].toInt() and 0xFF)
-                if (intensity > 255) continue
-                val elevation = elevationStart + (i * LidarConstants.ELEVATION_STEP)
-                val radElevation = Math.toRadians(elevation.toDouble()).toFloat()
-                val cosElevation = cos(radElevation)
-                val sinElevation = sin(radElevation)
-                val point = LidarPoint(
-                    x = radius * cosElevation * sinAzimuth,
-                    y = radius * cosElevation * cosAzimuth,
-                    z = radius * sinElevation,
-                    intensity = intensity,
-                    azimuth = azimuth,
-                    elevation = elevation,
-                    valid = true,
-                    echoNum = echoNum
-                )
-                points.add(point)
-            }
-            return isUpperPacket
-        } catch (e: UninitializedPropertyAccessException) {
-            log("警告：查找表未初始化，嘗試重新加載")
-            context?.let { loadLookupTableFromResource(it) }
-            return false
-        } catch (e: Exception) {
-            log("處理數據包時出錯: ${e.message}")
-            return false
-        }
-    }
 
-    fun getLatestFramePoints(): ArrayList<LidarPoint> {
-        synchronized(frameLock) {
-            return ArrayList(framePointsBuffer)
+        // 解析方位角 - 更接近C++实现
+        val azimuthRawIn = ((data[LidarConstants.DATA_START_OFFSET + 3].toInt() and 0xFF) shl 8) or
+                (data[LidarConstants.DATA_START_OFFSET + 2].toInt() and 0xFF)
+
+        // 使用lookup表计算实际方位角，与C++代码完全一致
+        val lookupTable = LidarConstants.LOOKUP_TABLE
+        val azimuth = if (azimuthRawIn < lookupTable.size) {
+            lookupTable[azimuthRawIn] / 100.0f
+        } else {
+            // 如果超出lookup表范围，使用默认计算方法
+            (azimuthRawIn * LidarConstants.AZIMUTH_RESOLUTION)
         }
+
+        // 预先计算三角函数值
+        val radAzimuth = Math.toRadians(azimuth.toDouble()).toFloat()
+        val cosAzimuth = cos(radAzimuth)
+        val sinAzimuth = sin(radAzimuth)
+
+        // 预先获取起始仰角
+        val elevationStart = if (isUpperPacket) LidarConstants.ELEVATION_START_UPPER else LidarConstants.ELEVATION_START_LOWER
+
+        if (isUpperPacket && azimuthRawIn % 100 == 0) {
+            log("[Debug msg] elevation_start: $elevationStart, azimuth: $azimuth")
+        }
+
+        val pointStart = LidarConstants.DATA_START_OFFSET + 4
+        points.ensureCapacity(points.size + LidarConstants.POINTS_PER_PACKET)
+
+        for (i in 0 until LidarConstants.POINTS_PER_PACKET) {
+            val dataOffset = pointStart + (i * 3)
+            if (dataOffset + 2 >= data.size) continue
+
+            val intensity = (data[dataOffset].toInt() and 0xFF).toFloat()
+            var radius = (((data[dataOffset + 2].toInt() and 0xFF) shl 8) or
+                    (data[dataOffset + 1].toInt() and 0xFF)).toFloat() / 16.0f
+            radius = (radius + 16.0f) * 0.15f  // Match C++ radius calculation
+
+            if (intensity > 255) continue
+
+            val elevation = elevationStart + (i * LidarConstants.ELEVATION_STEP)
+            val radElevation = Math.toRadians(elevation.toDouble()).toFloat()
+            val cosElevation = cos(radElevation)
+            val sinElevation = sin(radElevation)
+
+            val point = LidarPoint(
+                y = radius * cosElevation * cosAzimuth,    // Match C++ X-Y swap
+                x = radius * cosElevation * sinAzimuth,    // Match C++ X-Y swap
+                z = radius * sinElevation,
+                intensity = intensity,
+                azimuth = azimuth,
+                elevation = elevation,
+                valid = true,
+                echoNum = echoNum
+            )
+            points.add(point)
+
+            // Debug output matching C++ format for first two points
+            if ((i == 1 || i == 2) && isUpperPacket && azimuthRawIn % 500 == 0) {
+                log("[Debug msg] No of point & intensity & radius: $i, $intensity, $radius")
+                log("[Debug msg] set XYZ: ${point.x}, ${point.y}, ${point.z}")
+            }
+        }
+
+        return isUpperPacket
     }
 
     private fun sendPointsToRenderer() {
         val rendererCopy = renderer
         val surfaceViewCopy = glSurfaceView
-        if (rendererCopy != null && surfaceViewCopy != null && framePointsBuffer.isNotEmpty()) {
-            val pointArray = FloatArray(framePointsBuffer.size * 7).apply {
-                framePointsBuffer.forEachIndexed { index, point ->
-                    val offset = index * 7
-                    this[offset] = point.x
-                    this[offset + 1] = point.y
-                    this[offset + 2] = point.z
-                    this[offset + 3] = point.intensity
-                    this[offset + 4] = 0f // normal x
-                    this[offset + 5] = 0f // normal y
-                    this[offset + 6] = 0f // normal z
+
+        if (rendererCopy != null && surfaceViewCopy != null) {
+            synchronized(frameLock) {
+                if (latestCompleteFrame.isNotEmpty()) {
+                    val pointCount = latestCompleteFrame.size
+                    log("Sending $pointCount points to renderer")
+                    val pointArray = FloatArray(pointCount * 7)
+                    latestCompleteFrame.forEachIndexed { index, point ->
+                        val offset = index * 7
+                        pointArray[offset] = point.x
+                        pointArray[offset + 1] = point.z
+                        pointArray[offset + 2] = -point.y
+                        pointArray[offset + 3] = point.intensity
+                        val norm = if (point.x != 0f || point.y != 0f || point.z != 0f) {
+                            val d = Math.sqrt((point.x * point.x + point.y * point.y + point.z * point.z).toDouble()).toFloat()
+                            if (d < 0.001f) 1f else d
+                        } else 1f
+                        pointArray[offset + 4] = point.x / norm
+                        pointArray[offset + 5] = point.z / norm
+                        pointArray[offset + 6] = -point.y / norm
+                        if (index < 5) {
+                            log("Point $index: x=${point.x}, y=${point.y}, z=${point.z}, intensity=${point.intensity}")
+                        }
+                    }
+
+                    surfaceViewCopy.queueEvent {
+                        rendererCopy.updatePoints(pointArray)
+                        surfaceViewCopy.requestRender()
+                        log("Render requested with $pointCount points")
+                        onStatusUpdate?.invoke("Rendered $pointCount points")
+                    }
+                } else {
+                    log("No points in frame to render")
+                    onStatusUpdate?.invoke("No points in frame")
                 }
             }
-            surfaceViewCopy.queueEvent {
-                rendererCopy.updatePoints(pointArray)
-                log("Rendered frame with ${framePointsBuffer.size} points")
-            }
-            // 清空 framePointsBuffer，以便下一幀重新填充
-            synchronized(frameLock) {
-                framePointsBuffer.clear()
-            }
+        } else {
+            log("Renderer or SurfaceView is null")
+            onStatusUpdate?.invoke("Renderer or SurfaceView null")
         }
     }
 

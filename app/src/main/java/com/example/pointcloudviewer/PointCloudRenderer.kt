@@ -4,144 +4,111 @@ import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.util.Log
-import javax.microedition.khronos.egl.EGLConfig
-import javax.microedition.khronos.opengles.GL10
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import kotlin.math.cos
-import kotlin.math.sin
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
 
 class PointCloudRenderer : GLSurfaceView.Renderer {
-    private val maxPoints = 850000
-    private val floatsPerPoint = 7
-    var displayRatio: Float = 1.0f
-    private val pointData = FloatArray(maxPoints * floatsPerPoint)
-    private var numPoints = 0
-    private var startPoint = 0
-    private var vertexBuffer: FloatBuffer? = null
-    private var program = 0
-    private var isInitialized = false
-    private var isReadyToRender = false
-
-    private var showAxis = true
-    private var showGrid = true
-    private lateinit var axisPosBuffer: FloatBuffer
-    private lateinit var axisColorBuffer: FloatBuffer
-    private var axisProgram = 0
-
-    private lateinit var gridBuffer: FloatBuffer
+    private var pointBuffer: FloatBuffer? = null
+    private var gridBuffer: FloatBuffer? = null
+    private var axisBuffer: FloatBuffer? = null
+    private var pointCount: Int = 0
+    private var gridLineCount: Int = 0
+    private var program: Int = 0
     private var gridProgram: Int = 0
-    private var gridVertexCount: Int = 0
+    private var axisProgram: Int = 0
+    private var mvpMatrixHandle: Int = 0
+    private var gridMvpMatrixHandle: Int = 0
+    private var axisMvpMatrixHandle: Int = 0
+    private var positionHandle: Int = 0
+    private var gridPositionHandle: Int = 0
+    private var axisPositionHandle: Int = 0
+    private var intensityHandle: Int = 0
+    private var axisColorHandle: Int = 0
+    private var isFirstFrameReceived = false
+    private var showGrid: Boolean = true
+    private var showAxis: Boolean = true
+    private var colorMode: Int = 0 // 0: 強度, 1: 深度, 2: 顏色
+    var displayRatio: Float = 1.0f // 顯示點雲比例
 
-    private val BYTES_PER_FLOAT = 4
-    private val pointVertexSize = 7
+    private val pointSize = 1.0f
+    private var distanceScale = 1.5f
 
-    private val projectionMatrix = FloatArray(16)
-    private val viewMatrix = FloatArray(16)
+    private var rotationX = 0f
+    private var rotationY = 0f
+    private var translateX = 0f
+    private var translateY = 0f
+    private var scaleFactorAccumulated = 1.0f
+
+    private var centerX = 0f
+    private var centerY = 0f
+    private var centerZ = 0f
+
+    private val rotationMatrix = FloatArray(16)
+    private val translateMatrix = FloatArray(16)
+    private val scaleMatrix = FloatArray(16)
+    private val tempMatrix = FloatArray(16)
     private val mvpMatrix = FloatArray(16)
+    private val viewMatrix = FloatArray(16)
+    private val projectionMatrix = FloatArray(16)
 
-    private val mvpLock = Object()
-    private val latestMvpMatrix = FloatArray(16)
-
-    private val cameraController = CameraController()
-
-    private var currentColorMode = 0
-
-    companion object {
-        private const val TAG = "PointCloudRenderer"
-        private const val INITIAL_SIZE = 1000f    // 初始大小 1000x1000
-        private const val MIN_SIZE = 1f          // 最小縮放 1x1
-        private const val MAX_SIZE = 10000f      // 最大縮放 10000x10000
-    }
-
-    private val axisVertices = floatArrayOf(
-        0f, 0f, 0f, 1f, 0f, 0f, 1f,
-        1f, 0f, 0f, 1f, 0f, 0f, 1f,
-        0f, 0f, 0f, 0f, 1f, 0f, 1f,
-        0f, 1f, 0f, 0f, 1f, 0f, 1f,
-        0f, 0f, 0f, 0f, 0f, 1f, 1f,
-        0f, 0f, 1f, 0f, 0f, 1f, 1f
-    )
-
-    private val vertexShaderCodeStr = """
+    private val vertexShaderCode = """
         uniform mat4 uMVPMatrix;
-        attribute vec3 aPosition;
+        attribute vec4 aPosition;
         attribute float aIntensity;
-        attribute vec3 aColor;
         varying float vIntensity;
-        varying vec3 vColor;
-        varying float vDepth;
         void main() {
-            gl_Position = uMVPMatrix * vec4(aPosition, 1.0);
-            gl_PointSize = 2.0;
-            vIntensity = aIntensity;
-            vColor = aColor;
-            vDepth = aPosition.z;
+            gl_Position = uMVPMatrix * aPosition;
+            gl_PointSize = $pointSize;
+            vIntensity = aIntensity / 255.0;
         }
     """.trimIndent()
 
-    private val fragmentShaderCodeStr = """
+    private val fragmentShaderCode = """
         precision mediump float;
         varying float vIntensity;
-        varying vec3 vColor;
-        varying float vDepth;
-        uniform int uColorMode;
-        uniform float uIntensityThreshold;
-        
         void main() {
-            if(vIntensity < uIntensityThreshold) {
-                discard;
-            }
-            if(uColorMode == 0) {
-                float normalizedIntensity = clamp(vIntensity / 255.0, 0.0, 1.0);
-                vec3 intensityColor = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), normalizedIntensity);
-                gl_FragColor = vec4(intensityColor, 1.0);
-            } else if(uColorMode == 1) {
-                const float minDepth = -0.3;
-                const float maxDepth = 0.3;
-                float normalizedDepth = clamp((vDepth - minDepth) / (maxDepth - minDepth), 0.0, 1.0);
-                gl_FragColor = vec4(normalizedDepth, 0.0, 1.0 - normalizedDepth, 1.0);
-            } else if(uColorMode == 2) {
-                vec3 mappedColor = (vColor + vec3(1.0)) * 0.5;
-                gl_FragColor = vec4(mappedColor, 1.0);
+            vec3 color;
+            if (vIntensity < 0.33) {
+                color = mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), vIntensity / 0.33);
+            } else if (vIntensity < 0.66) {
+                color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 1.0, 0.0), (vIntensity - 0.33) / 0.33);
             } else {
-                gl_FragColor = vec4(1.0);
+                color = mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (vIntensity - 0.66) / 0.33);
             }
-        }
-    """.trimIndent()
-
-    private val axisVertexShaderCodeStr = """
-        uniform mat4 uMVPMatrix;
-        attribute vec3 aPosition;
-        attribute vec4 aColor;
-        varying vec4 vColor;
-        void main() {
-            gl_Position = uMVPMatrix * vec4(aPosition, 1.0);
-            vColor = aColor;
-        }
-    """.trimIndent()
-
-    private val axisFragmentShaderCodeStr = """
-        precision mediump float;
-        varying vec4 vColor;
-        void main() {
-            gl_FragColor = vColor;
+            gl_FragColor = vec4(color, 1.0);
         }
     """.trimIndent()
 
     private val gridVertexShaderCode = """
         uniform mat4 uMVPMatrix;
-        attribute vec3 aPosition;
-        attribute vec4 aColor;
-        varying vec4 vColor;
+        attribute vec4 aPosition;
         void main() {
-            gl_Position = uMVPMatrix * vec4(aPosition, 1.0);
-            vColor = aColor;
+            gl_Position = uMVPMatrix * aPosition;
         }
     """.trimIndent()
 
     private val gridFragmentShaderCode = """
+        precision mediump float;
+        void main() {
+            gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0); // Pure white
+        }
+    """.trimIndent()
+
+    private val axisVertexShaderCode = """
+        uniform mat4 uMVPMatrix;
+        attribute vec4 aPosition;
+        attribute vec4 aColor;
+        varying vec4 vColor;
+        void main() {
+            gl_Position = uMVPMatrix * aPosition;
+            vColor = aColor;
+        }
+    """.trimIndent()
+
+    private val axisFragmentShaderCode = """
         precision mediump float;
         varying vec4 vColor;
         void main() {
@@ -149,359 +116,281 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         }
     """.trimIndent()
 
-    fun generateSimulatedPointsBatch(): FloatArray {
-        val pointsPerUpdate = 850000
-        val batch = FloatArray(pointsPerUpdate * floatsPerPoint)
-        val rings = 32
-        val pointsPerRing = pointsPerUpdate / rings
-        var offset = 0
-        for (ring in 0 until rings) {
-            val verticalAngle = -15f + (ring * 1f)
-            for (i in 0 until pointsPerRing) {
-                val horizontalAngle = (i.toFloat() / pointsPerRing) * 360f
-                val distance = 0.5f + Math.random().toFloat() * 0.5f
-                val rad_h = Math.toRadians(horizontalAngle.toDouble())
-                val rad_v = Math.toRadians(verticalAngle.toDouble())
-                val x = (distance * cos(rad_v) * cos(rad_h)).toFloat()
-                val y = (distance * cos(rad_v) * sin(rad_h)).toFloat()
-                val z = (distance * sin(rad_v)).toFloat()
-                val intensity = ((x + 1f) / 2f) * 255f
-                val norm = if (distance != 0f) distance else 1f
-                val nx = x / norm
-                val ny = y / norm
-                val nz = z / norm
-                batch[offset++] = x
-                batch[offset++] = y
-                batch[offset++] = z
-                batch[offset++] = intensity
-                batch[offset++] = nx
-                batch[offset++] = ny
-                batch[offset++] = nz
-            }
-        }
-        return batch
+    init {
+        Matrix.setIdentityM(rotationMatrix, 0)
+        Matrix.setIdentityM(translateMatrix, 0)
+        Matrix.setIdentityM(scaleMatrix, 0)
+        createGrid(-10f, 10f, 1f)
+        createAxis()
     }
 
-    fun updatePoints(newBatch: FloatArray) {
-        if (!isInitialized) return
-        val startTime = System.currentTimeMillis()
-
-        val incomingPoints = newBatch.size / floatsPerPoint
-        if (incomingPoints == 0) return
-
-        if (numPoints < maxPoints) {
-            val available = maxPoints - numPoints
-            val pointsToAdd = minOf(incomingPoints, available)
-            val floatsToCopy = pointsToAdd * floatsPerPoint
-            val startPos = numPoints * floatsPerPoint
-            System.arraycopy(newBatch, 0, pointData, startPos, floatsToCopy)
-            numPoints += pointsToAdd
-
-            if (pointsToAdd < incomingPoints) {
-                val remaining = incomingPoints - pointsToAdd
-                for (i in 0 until remaining) {
-                    val idx = (startPoint + i) % maxPoints
-                    System.arraycopy(newBatch, (pointsToAdd + i) * floatsPerPoint, pointData, idx * floatsPerPoint, floatsPerPoint)
-                }
-                startPoint = (startPoint + remaining) % maxPoints
-                numPoints = maxPoints
-            }
-        } else {
-            val pointsToAdd = minOf(incomingPoints, maxPoints)
-            for (i in 0 until pointsToAdd) {
-                val idx = (startPoint + i) % maxPoints
-                System.arraycopy(newBatch, i * floatsPerPoint, pointData, idx * floatsPerPoint, floatsPerPoint)
-            }
-            startPoint = (startPoint + pointsToAdd) % maxPoints
+    private fun createGrid(min: Float, max: Float, step: Float): FloatBuffer {
+        val lines = ArrayList<Float>()
+        var pos = min
+        // X方向線條 (沿著紅色軸)
+        while (pos <= max) {
+            lines.add(pos); lines.add(0f); lines.add(min)  // X-Z平面上的線
+            lines.add(pos); lines.add(0f); lines.add(max)
+            pos += step
         }
-
-        updateVertexBuffer()
-        isReadyToRender = true
-        val updateTime = System.currentTimeMillis() - startTime
-        Log.d(TAG, "Point update took: ${updateTime}ms, numPoints: $numPoints, incomingPoints: $incomingPoints")
+        pos = min
+        // Z方向線條 (沿著綠色軸)
+        while (pos <= max) {
+            lines.add(min); lines.add(0f); lines.add(pos)
+            lines.add(max); lines.add(0f); lines.add(pos)
+            pos += step
+        }
+        gridLineCount = lines.size / 6
+        val buffer = ByteBuffer.allocateDirect(lines.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(lines.toFloatArray())
+                position(0)
+            }
+        gridBuffer = buffer
+        return buffer
     }
 
-    private fun updateVertexBuffer() {
-        vertexBuffer?.let { buffer ->
-            buffer.clear()
-            for (i in 0 until numPoints) {
-                val idx = (startPoint + i) % maxPoints
-                val base = idx * floatsPerPoint
-                buffer.put(pointData, base, floatsPerPoint)
+    private fun createAxis(): FloatBuffer {
+        val axisData = floatArrayOf(
+            // X-axis (red, positive X)
+            0f, 0f, 0f, 1f, 0f, 0f, 1f,  // Start (R=1, G=0, B=0)
+            10f, 0f, 0f, 1f, 0f, 0f, 1f, // End (positive X)
+
+            // Y-axis (blue, positive Y) - 改為藍色向上
+            0f, 0f, 0f, 0f, 0f, 1f, 1f,  // Start (R=0, G=0, B=1)
+            0f, 10f, 0f, 0f, 0f, 1f, 1f, // End (positive Y)
+
+            // Z-axis (green, negative Z) - 綠色改為反方向
+            0f, 0f, 0f, 0f, 1f, 0f, 1f,  // Start (R=0, G=1, B=0)
+            0f, 0f, -10f, 0f, 1f, 0f, 1f // End (negative Z)
+        )
+        val buffer = ByteBuffer.allocateDirect(axisData.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(axisData)
+                position(0)
             }
-            buffer.position(0)
-        }
+        axisBuffer = buffer
+        return buffer
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
-        initShaders()
-        initAxisShaders()
-        initGridShaders()
-        setupPointCloud()
-        setupAxisBuffers()
-        setupGrid()
-        isInitialized = true
-        Log.i(TAG, "Surface created, OpenGL initialized")
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+
+        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode)
+        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCode)
+        program = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, vertexShader)
+            GLES20.glAttachShader(it, fragmentShader)
+            GLES20.glLinkProgram(it)
+            checkGlError("Link Point Cloud Program")
+        }
+        mvpMatrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
+        positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
+        intensityHandle = GLES20.glGetAttribLocation(program, "aIntensity")
+
+        val gridVertexShader = loadShader(GLES20.GL_VERTEX_SHADER, gridVertexShaderCode)
+        val gridFragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, gridFragmentShaderCode)
+        gridProgram = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, gridVertexShader)
+            GLES20.glAttachShader(it, gridFragmentShader)
+            GLES20.glLinkProgram(it)
+            checkGlError("Link Grid Program")
+        }
+        gridMvpMatrixHandle = GLES20.glGetUniformLocation(gridProgram, "uMVPMatrix")
+        gridPositionHandle = GLES20.glGetAttribLocation(gridProgram, "aPosition")
+
+        val axisVertexShader = loadShader(GLES20.GL_VERTEX_SHADER, axisVertexShaderCode)
+        val axisFragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, axisFragmentShaderCode)
+        axisProgram = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, axisVertexShader)
+            GLES20.glAttachShader(it, axisFragmentShader)
+            GLES20.glLinkProgram(it)
+            checkGlError("Link Axis Program")
+        }
+        axisMvpMatrixHandle = GLES20.glGetUniformLocation(axisProgram, "uMVPMatrix")
+        axisPositionHandle = GLES20.glGetAttribLocation(axisProgram, "aPosition")
+        axisColorHandle = GLES20.glGetAttribLocation(axisProgram, "aColor")
+
+        Matrix.setLookAtM(viewMatrix, 0, 0f, 8f, 16f, 0f, 0f, 0f, 0f, 1f, 0f)
+
+        Matrix.setIdentityM(rotationMatrix, 0)
+        Matrix.setIdentityM(translateMatrix, 0)
+        Matrix.setIdentityM(scaleMatrix, 0)
+        Matrix.scaleM(scaleMatrix, 0, 1f, 1f, 1f)
+        rotationX = 0f
+        rotationY = 0f
+        translateX = 0f
+        translateY = 0f
+        scaleFactorAccumulated = 1.0f
+        updateMVPMatrix()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         val ratio = width.toFloat() / height.toFloat()
-        Matrix.frustumM(projectionMatrix, 0,
-            -ratio * INITIAL_SIZE/200f,
-            ratio * INITIAL_SIZE/200f,
-            -INITIAL_SIZE/200f,
-            INITIAL_SIZE/200f,
-            1f,
-            100f)
-        Log.i(TAG, "Surface changed: width=$width, height=$height")
+        // 修改 FOV 為 45 度
+        Matrix.perspectiveM(projectionMatrix, 0, 45f, ratio, 0.1f, 100f)
+        updateMVPMatrix()
     }
 
     override fun onDrawFrame(gl: GL10?) {
-        if (!isInitialized) return
-        val startTime = System.currentTimeMillis()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
-        Matrix.setLookAtM(viewMatrix, 0, 0f, 0f, 10f, 0f, 0f, 0f, 0f, 1f, 0f)
-        val tempMatrix = FloatArray(16)
-        Matrix.multiplyMM(tempMatrix, 0, viewMatrix, 0, cameraController.getModelMatrix(), 0)
-        Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, tempMatrix, 0)
-        synchronized(mvpLock) {
-            System.arraycopy(mvpMatrix, 0, latestMvpMatrix, 0, 16)
-        }
-        if (showGrid) drawGrid()
-        if (isReadyToRender) drawPointCloud()
-        if (showAxis) drawAxis()
-        val frameTime = System.currentTimeMillis() - startTime
-        if (frameTime > 16) {
-            Log.w(TAG, "Frame render took: ${frameTime}ms")
-        }
-    }
 
-    private fun drawPointCloud() {
-        GLES20.glUseProgram(program)
-        val matrixHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix")
-        GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mvpMatrix, 0)
-        val colorModeHandle = GLES20.glGetUniformLocation(program, "uColorMode")
-        GLES20.glUniform1i(colorModeHandle, currentColorMode)
-        val thresholdHandle = GLES20.glGetUniformLocation(program, "uIntensityThreshold")
-        GLES20.glUniform1f(thresholdHandle, (1 - displayRatio) * 255f)
-        vertexBuffer?.let { buffer ->
-            val stride = pointVertexSize * BYTES_PER_FLOAT
-            val posHandle = GLES20.glGetAttribLocation(program, "aPosition")
-            buffer.position(0)
-            GLES20.glEnableVertexAttribArray(posHandle)
-            GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, stride, buffer)
-            val intensityHandle = GLES20.glGetAttribLocation(program, "aIntensity")
-            buffer.position(3)
-            GLES20.glEnableVertexAttribArray(intensityHandle)
-            GLES20.glVertexAttribPointer(intensityHandle, 1, GLES20.GL_FLOAT, false, stride, buffer)
-            val colorHandle = GLES20.glGetAttribLocation(program, "aColor")
-            buffer.position(4)
-            GLES20.glEnableVertexAttribArray(colorHandle)
-            GLES20.glVertexAttribPointer(colorHandle, 3, GLES20.GL_FLOAT, false, stride, buffer)
-            GLES20.glDrawArrays(GLES20.GL_POINTS, 0, numPoints)
-            GLES20.glDisableVertexAttribArray(posHandle)
-            GLES20.glDisableVertexAttribArray(intensityHandle)
-            GLES20.glDisableVertexAttribArray(colorHandle)
+        if (showGrid && gridBuffer != null && gridLineCount > 0) {
+            drawGrid()
         }
-    }
 
-    private fun drawAxis() {
-        GLES20.glUseProgram(axisProgram)
-        val matrixHandle = GLES20.glGetUniformLocation(axisProgram, "uMVPMatrix")
-        GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mvpMatrix, 0)
-        val posHandle = GLES20.glGetAttribLocation(axisProgram, "aPosition")
-        val colorHandle = GLES20.glGetAttribLocation(axisProgram, "aColor")
-        axisPosBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(posHandle)
-        GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 0, axisPosBuffer)
-        axisColorBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(colorHandle)
-        GLES20.glVertexAttribPointer(colorHandle, 4, GLES20.GL_FLOAT, false, 0, axisColorBuffer)
-        GLES20.glLineWidth(1.0f)
-        GLES20.glDrawArrays(GLES20.GL_LINES, 0, 6)
-        GLES20.glDisableVertexAttribArray(posHandle)
-        GLES20.glDisableVertexAttribArray(colorHandle)
+        if (showAxis && axisBuffer != null) {
+            drawAxis()
+        }
+
+        pointBuffer?.let { buffer ->
+            if (pointCount > 0) {
+                GLES20.glUseProgram(program)
+                GLES20.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
+                buffer.position(0)
+                GLES20.glVertexAttribPointer(positionHandle, 3, GLES20.GL_FLOAT, false, 7 * 4, buffer)
+                GLES20.glEnableVertexAttribArray(positionHandle)
+                buffer.position(3)
+                GLES20.glVertexAttribPointer(intensityHandle, 1, GLES20.GL_FLOAT, false, 7 * 4, buffer)
+                GLES20.glEnableVertexAttribArray(intensityHandle)
+
+                // 根據顯示比例計算點數
+                val displayCount = (pointCount * displayRatio).toInt().coerceAtLeast(1)
+                GLES20.glDrawArrays(GLES20.GL_POINTS, 0, displayCount)
+
+                GLES20.glDisableVertexAttribArray(positionHandle)
+                GLES20.glDisableVertexAttribArray(intensityHandle)
+            }
+        }
     }
 
     private fun drawGrid() {
         GLES20.glUseProgram(gridProgram)
-        val mvpHandle = GLES20.glGetUniformLocation(gridProgram, "uMVPMatrix")
-        GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0)
-        val posHandle = GLES20.glGetAttribLocation(gridProgram, "aPosition")
-        val colorHandle = GLES20.glGetAttribLocation(gridProgram, "aColor")
-        gridBuffer.position(0)
-        GLES20.glEnableVertexAttribArray(posHandle)
-        GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 7 * BYTES_PER_FLOAT, gridBuffer)
-        gridBuffer.position(3)
-        GLES20.glEnableVertexAttribArray(colorHandle)
-        GLES20.glVertexAttribPointer(colorHandle, 4, GLES20.GL_FLOAT, false, 7 * BYTES_PER_FLOAT, gridBuffer)
-        GLES20.glDrawArrays(GLES20.GL_LINES, 0, gridVertexCount)
-        GLES20.glDisableVertexAttribArray(posHandle)
-        GLES20.glDisableVertexAttribArray(colorHandle)
+        GLES20.glUniformMatrix4fv(gridMvpMatrixHandle, 1, false, mvpMatrix, 0)
+        gridBuffer?.position(0)
+        GLES20.glVertexAttribPointer(gridPositionHandle, 3, GLES20.GL_FLOAT, false, 0, gridBuffer)
+        GLES20.glEnableVertexAttribArray(gridPositionHandle)
+        GLES20.glLineWidth(1.0f)
+        GLES20.glDrawArrays(GLES20.GL_LINES, 0, gridLineCount * 2)
+        GLES20.glDisableVertexAttribArray(gridPositionHandle)
     }
 
-    private fun initShaders() {
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCodeStr)
-        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCodeStr)
-        program = GLES20.glCreateProgram()
-        GLES20.glAttachShader(program, vertexShader)
-        GLES20.glAttachShader(program, fragmentShader)
-        GLES20.glLinkProgram(program)
+    private fun drawAxis() {
+        GLES20.glUseProgram(axisProgram)
+        GLES20.glUniformMatrix4fv(axisMvpMatrixHandle, 1, false, mvpMatrix, 0)
+        axisBuffer?.position(0)
+        GLES20.glVertexAttribPointer(axisPositionHandle, 3, GLES20.GL_FLOAT, false, 7 * 4, axisBuffer)
+        GLES20.glEnableVertexAttribArray(axisPositionHandle)
+        axisBuffer?.position(3)
+        GLES20.glVertexAttribPointer(axisColorHandle, 4, GLES20.GL_FLOAT, false, 7 * 4, axisBuffer)
+        GLES20.glEnableVertexAttribArray(axisColorHandle)
+        GLES20.glLineWidth(3.0f)
+        GLES20.glDrawArrays(GLES20.GL_LINES, 0, 6)
+        GLES20.glDisableVertexAttribArray(axisPositionHandle)
+        GLES20.glDisableVertexAttribArray(axisColorHandle)
     }
 
-    private fun initAxisShaders() {
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, axisVertexShaderCodeStr)
-        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, axisFragmentShaderCodeStr)
-        axisProgram = GLES20.glCreateProgram()
-        GLES20.glAttachShader(axisProgram, vertexShader)
-        GLES20.glAttachShader(axisProgram, fragmentShader)
-        GLES20.glLinkProgram(axisProgram)
+    private fun updatePointsCenter(points: FloatArray) {
+        var minX = Float.MAX_VALUE
+        var maxX = Float.MIN_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = Float.MIN_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxZ = Float.MIN_VALUE
+
+        for (i in points.indices step 7) {
+            val x = points[i]
+            val y = points[i + 1]
+            val z = points[i + 2]
+            minX = minOf(minX, x)
+            maxX = maxOf(maxX, x)
+            minY = minOf(minY, y)
+            maxY = maxOf(maxY, y)
+            minZ = minOf(minZ, z)
+            maxZ = maxOf(maxZ, z)
+        }
+
+        centerX = (minX + maxX) / 2f
+        centerY = (minY + maxY) / 2f
+        centerZ = (minZ + maxZ) / 2f
+        updateMVPMatrix()
     }
 
-    private fun initGridShaders() {
-        val vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, gridVertexShaderCode)
-        val fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, gridFragmentShaderCode)
-        gridProgram = GLES20.glCreateProgram()
-        GLES20.glAttachShader(gridProgram, vertexShader)
-        GLES20.glAttachShader(gridProgram, fragmentShader)
-        GLES20.glLinkProgram(gridProgram)
+    private fun updateMVPMatrix() {
+        Matrix.setIdentityM(tempMatrix, 0)
+        Matrix.translateM(tempMatrix, 0, -centerX, -centerY, -centerZ)
+        Matrix.multiplyMM(tempMatrix, 0, scaleMatrix, 0, tempMatrix, 0)
+        Matrix.multiplyMM(tempMatrix, 0, rotationMatrix, 0, tempMatrix, 0)
+        Matrix.translateM(tempMatrix, 0, centerX, centerY, centerZ)
+        Matrix.multiplyMM(tempMatrix, 0, translateMatrix, 0, tempMatrix, 0)
+        Matrix.multiplyMM(mvpMatrix, 0, viewMatrix, 0, tempMatrix, 0)
+        Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, mvpMatrix, 0)
     }
 
-    private fun loadShader(type: Int, shaderCode: String): Int {
-        val shader = GLES20.glCreateShader(type)
-        GLES20.glShaderSource(shader, shaderCode)
-        GLES20.glCompileShader(shader)
-        val compileStatus = IntArray(1)
-        GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compileStatus, 0)
-        if (compileStatus[0] == 0) {
-            val error = GLES20.glGetShaderInfoLog(shader)
-            GLES20.glDeleteShader(shader)
-            throw RuntimeException("Error compiling shader: $error")
-        }
-        return shader
-    }
-
-    private fun setupPointCloud() {
-        val vb = ByteBuffer.allocateDirect(maxPoints * pointVertexSize * BYTES_PER_FLOAT)
-        vb.order(ByteOrder.nativeOrder())
-        vertexBuffer = vb.asFloatBuffer()
-    }
-
-    private fun setupAxisBuffers() {
-        val vertexCount = 6
-        axisPosBuffer = ByteBuffer.allocateDirect(vertexCount * 3 * BYTES_PER_FLOAT)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-        axisColorBuffer = ByteBuffer.allocateDirect(vertexCount * 4 * BYTES_PER_FLOAT)
-            .order(ByteOrder.nativeOrder()).asFloatBuffer()
-        for (i in 0 until vertexCount) {
-            val offset = i * 7
-            axisPosBuffer.put(axisVertices, offset, 3)
-            axisColorBuffer.put(axisVertices, offset + 3, 4)
-        }
-        axisPosBuffer.position(0)
-        axisColorBuffer.position(0)
-    }
-
-    private fun generateGridVertices(): FloatArray {
-        val gridMin = -MAX_SIZE / 2f    // -5000
-        val gridMax = MAX_SIZE / 2f     // 5000
-        val step = INITIAL_SIZE / 10f   // 初始網格間距為 100
-
-        val lines = mutableListOf<Float>()
-        var x = gridMin
-        while (x <= gridMax) {
-            lines.add(x); lines.add(gridMin); lines.add(0f)
-            lines.add(0.7f); lines.add(0.7f); lines.add(0.7f); lines.add(1f)
-            lines.add(x); lines.add(gridMax); lines.add(0f)
-            lines.add(0.7f); lines.add(0.7f); lines.add(0.7f); lines.add(1f)
-            x += step
-        }
-        var y = gridMin
-        while (y <= gridMax) {
-            lines.add(gridMin); lines.add(y); lines.add(0f)
-            lines.add(0.7f); lines.add(0.7f); lines.add(0.7f); lines.add(1f)
-            lines.add(gridMax); lines.add(y); lines.add(0f)
-            lines.add(0.7f); lines.add(0.7f); lines.add(0.7f); lines.add(1f)
-            y += step
-        }
-        return lines.toFloatArray()
-    }
-
-    private fun setupGrid() {
-        val gridVerts = generateGridVertices()
-        gridVertexCount = gridVerts.size / 7
-        val bb = ByteBuffer.allocateDirect(gridVerts.size * BYTES_PER_FLOAT)
-        bb.order(ByteOrder.nativeOrder())
-        gridBuffer = bb.asFloatBuffer()
-        gridBuffer.put(gridVerts)
-        gridBuffer.position(0)
-    }
-
-    inner class CameraController {
-        private val modelMatrix = FloatArray(16)
-        private var scaleFactor = INITIAL_SIZE / 200f  // 初始縮放使顯示1000x1000
-        private var rotationX = 0f
-        private var rotationY = 0f
-        private var translateX = 0f
-        private var translateY = 0f
-
-        init {
-            Matrix.setIdentityM(modelMatrix, 0)
-        }
-
-        fun getModelMatrix(): FloatArray {
-            val tempMatrix = FloatArray(16)
-            Matrix.setIdentityM(tempMatrix, 0)
-
-            Matrix.translateM(tempMatrix, 0, translateX, translateY, 0f)
-            Matrix.rotateM(tempMatrix, 0, rotationX, 1f, 0f, 0f)
-            Matrix.rotateM(tempMatrix, 0, rotationY, 0f, 1f, 0f)
-            Matrix.scaleM(tempMatrix, 0, scaleFactor, scaleFactor, scaleFactor)
-
-            return tempMatrix
-        }
-
-        fun rotate(dx: Float, dy: Float) {
-            rotationY += dx * 0.5f
-            rotationX += dy * 0.5f
-            rotationX = rotationX.coerceIn(-90f, 90f)
-        }
-
-        fun scale(factor: Float) {
-            val newScale = (scaleFactor * factor).coerceIn(
-                MIN_SIZE / 200f,  // 最小縮放到 1x1
-                MAX_SIZE / 200f   // 最大縮放到 10000x10000
-            )
-            scaleFactor = newScale
-        }
-
-        fun translate(dx: Float, dy: Float) {
-            translateX += dx * 0.01f / scaleFactor
-            translateY -= dy * 0.01f / scaleFactor
-        }
-
-        fun resetView() {
-            scaleFactor = INITIAL_SIZE / 200f
-            rotationX = 0f
-            rotationY = 0f
-            translateX = 0f
-            translateY = 0f
+    fun updatePoints(points: FloatArray) {
+        synchronized(this) {
+            pointBuffer = createBuffer(points)
+            pointCount = points.size / 7
+            updatePointsCenter(points)
+            isFirstFrameReceived = true
+            log("Updated points: $pointCount")
         }
     }
 
-    fun rotate(dx: Float, dy: Float) = cameraController.rotate(dx, dy)
-    fun scale(factor: Float) = cameraController.scale(factor)
-    fun translate(dx: Float, dy: Float) = cameraController.translate(dx, dy)
-    fun resetView() = cameraController.resetView()
-
-    fun toggleAxis() {
-        showAxis = !showAxis
+    fun setDistanceScale(scale: Float) {
+        distanceScale = scale.coerceAtLeast(0.1f)
     }
 
-    fun isAxisVisible(): Boolean = showAxis
+    fun rotate(dx: Float, dy: Float) {
+        rotationX += dx
+        rotationY += dy
+        Matrix.setRotateM(rotationMatrix, 0, rotationX, 1f, 0f, 0f)
+        Matrix.rotateM(rotationMatrix, 0, rotationY, 0f, 1f, 0f)
+        updateMVPMatrix()
+    }
+
+    fun translate(dx: Float, dy: Float) {
+        val scaleFactor = 0.1f / scaleFactorAccumulated
+        translateX += dx * scaleFactor
+        translateY += dy * scaleFactor
+        Matrix.setIdentityM(translateMatrix, 0)
+        Matrix.translateM(translateMatrix, 0, translateX, -translateY, 0f)
+        updateMVPMatrix()
+    }
+
+    fun scale(scaleFactor: Float) {
+        scaleFactorAccumulated *= scaleFactor
+        scaleFactorAccumulated = scaleFactorAccumulated.coerceIn(0.1f, 10.0f)
+        Matrix.setIdentityM(scaleMatrix, 0)
+        Matrix.scaleM(scaleMatrix, 0, scaleFactorAccumulated, scaleFactorAccumulated, scaleFactorAccumulated)
+        updateMVPMatrix()
+    }
+
+    fun resetTransformation() {
+        rotationX = 0f
+        rotationY = 0f
+        translateX = 0f
+        translateY = 0f
+        scaleFactorAccumulated = 1.0f
+        Matrix.setIdentityM(rotationMatrix, 0)
+        Matrix.setIdentityM(translateMatrix, 0)
+        Matrix.setIdentityM(scaleMatrix, 0)
+        Matrix.scaleM(scaleMatrix, 0, 1f, 1f, 1f)
+        updateMVPMatrix()
+    }
+
+    // 為抽屜菜單添加的新方法
+    fun resetView() {
+        resetTransformation()
+    }
 
     fun setAxisVisibility(visible: Boolean) {
         showAxis = visible
@@ -512,45 +401,50 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     }
 
     fun setColorMode(mode: Int) {
-        currentColorMode = mode
+        colorMode = mode
+        // 這裡可以實現切換顏色模式的邏輯
+        log("Color mode changed to: $mode")
     }
 
-    fun getColorMode(): Int = currentColorMode
-
-    fun cycleColorMode() {
-        currentColorMode = (currentColorMode + 1) % 3
+    fun toggleGrid(): Boolean {
+        showGrid = !showGrid
+        log("Grid visibility: $showGrid")
+        return showGrid
     }
 
-    fun pickPoint(screenX: Float, screenY: Float, screenWidth: Int, screenHeight: Int): FloatArray? {
-        val currentMvp = FloatArray(16)
-        synchronized(mvpLock) {
-            System.arraycopy(latestMvpMatrix, 0, currentMvp, 0, 16)
-        }
-        var minDistance = Float.MAX_VALUE
-        var pickedPoint: FloatArray? = null
-        val threshold = 30f
-        for (i in 0 until numPoints) {
-            val idx = (startPoint + i) % maxPoints
-            val base = idx * floatsPerPoint
-            val x = pointData[base]
-            val y = pointData[base + 1]
-            val z = pointData[base + 2]
-            val pointVec = floatArrayOf(x, y, z, 1f)
-            val clipVec = FloatArray(4)
-            Matrix.multiplyMV(clipVec, 0, currentMvp, 0, pointVec, 0)
-            if (clipVec[3] == 0f) continue
-            val ndcX = clipVec[0] / clipVec[3]
-            val ndcY = clipVec[1] / clipVec[3]
-            val screenXPoint = ((ndcX + 1f) / 2f) * screenWidth
-            val screenYPoint = ((1f - ndcY) / 2f) * screenHeight
-            val dx = screenX - screenXPoint
-            val dy = screenY - screenYPoint
-            val distance = dx * dx + dy * dy
-            if (distance < minDistance && distance < threshold * threshold) {
-                minDistance = distance
-                pickedPoint = pointData.copyOfRange(base, base + floatsPerPoint)
+    private fun createBuffer(points: FloatArray): FloatBuffer {
+        return ByteBuffer.allocateDirect(points.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(points)
+                position(0)
+            }
+    }
+
+    private fun loadShader(type: Int, shaderCode: String): Int {
+        return GLES20.glCreateShader(type).also { shader ->
+            GLES20.glShaderSource(shader, shaderCode)
+            GLES20.glCompileShader(shader)
+            val compiled = IntArray(1)
+            GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, compiled, 0)
+            if (compiled[0] == 0) {
+                log("Shader compile error: ${GLES20.glGetShaderInfoLog(shader)}")
+                GLES20.glDeleteShader(shader)
             }
         }
-        return pickedPoint
     }
+
+    private fun checkGlError(operation: String) {
+        val error = GLES20.glGetError()
+        if (error != GLES20.GL_NO_ERROR) {
+            log("GL Error after $operation: $error")
+        }
+    }
+
+    private fun log(message: String) {
+        Log.d("PointCloudRenderer", message)
+    }
+
+    fun hasReceivedFirstFrame(): Boolean = isFirstFrameReceived
 }
