@@ -18,9 +18,9 @@ import kotlin.math.sin
 object UDPManager {
     private const val TAG = "UDPManager"
     private const val UDP_PORT = 7000
-    private const val SOCKET_BUFFER_SIZE = 64 * 1024 * 1024
+    private const val SOCKET_BUFFER_SIZE = 1024 * 1024 * 1024
     private const val PACKET_BUFFER_SIZE = 65535
-    private const val MAX_QUEUE_SIZE = 100000
+    private const val MAX_QUEUE_SIZE = 1000000
     private const val FRAME_MARKER_INTERVAL = 1000
     private var onStatusUpdate: ((String) -> Unit)? = null
 
