@@ -23,6 +23,23 @@ object UDPManager {
     private const val MAX_QUEUE_SIZE = 1000000
     private const val FRAME_MARKER_INTERVAL = 1000
     private var onStatusUpdate: ((String) -> Unit)? = null
+    private val frameBufferSize = 3  // 固定為 3 個 frame
+    private val frameBuffer = ArrayList<ArrayList<LidarPoint>>(frameBufferSize)
+    private var currentFrameIndex = 0
+    private var displayRatio = 1.0f  // 顯示比例，默認為 1.0（顯示全部）
+    private var enableIntensityFilter = false  // 新增開關，默認為關閉
+
+    // 提供外部設置 displayRatio 的方法
+    fun setDisplayRatio(ratio: Float) {
+        displayRatio = ratio.coerceIn(0.0f, 1.0f)
+        log("Display ratio updated to: $displayRatio")
+    }
+
+    // 提供外部設置強度過濾開關的方法
+    fun setIntensityFilterEnabled(enabled: Boolean) {
+        enableIntensityFilter = enabled
+        log("Intensity filter ${if (enabled) "enabled" else "disabled"}")
+    }
 
     object LidarConstants {
         const val HEADER_SIZE = 32
@@ -162,7 +179,12 @@ object UDPManager {
     fun setEchoMode(mode: EchoMode) {
         echoMode = mode
     }
-
+    init {
+        // 初始化 frame buffer
+        repeat(frameBufferSize) {
+            frameBuffer.add(ArrayList())
+        }
+    }
     @OptIn(InternalCoroutinesApi::class)
     private fun startUdpReceiver(): Job {
         return CoroutineScope(Dispatchers.IO).launch {
@@ -445,43 +467,91 @@ object UDPManager {
 
         if (isComplete || forcedCompletion) {
             if (frameSize > 0) {
-                // 计算帧完整度
                 val expectedPoints = LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME
                 val completeness = (frameSize * 100) / expectedPoints
-
                 log("${if (isComplete) "Complete" else "Forced ($reason)"} frame with $frameSize points ($completeness% complete)")
 
                 synchronized(frameLock) {
-                    latestCompleteFrame.clear()
-                    latestCompleteFrame.addAll(nextFrame)
+                    val pointsToStore = if (enableIntensityFilter) {
+                        // 按強度排序（從高到低）
+                        val sortedPoints = nextFrame.sortedByDescending { it.intensity }
+                        // 根據 displayRatio 計算要保留的點數
+                        val pointsToKeep = (frameSize * displayRatio).toInt().coerceAtLeast(1)
+                        // 保留強度較高的點
+                        sortedPoints.take(pointsToKeep)
+                    } else {
+                        // 不啟用強度過濾，直接使用所有點
+                        nextFrame.toList()
+                    }
+
+                    // 將處理後的點存入 frame buffer
+                    frameBuffer[currentFrameIndex].clear()
+                    frameBuffer[currentFrameIndex].addAll(pointsToStore)
+                    currentFrameIndex = (currentFrameIndex + 1) % frameBufferSize
                     isFrameReady.set(true)
                     nextFrame.clear()
+
+                    log("Stored ${pointsToStore.size} points in frame buffer (filter: $enableIntensityFilter, ratio: $displayRatio)")
                 }
 
-                // 计算并更新统计信息
                 if (isComplete) {
                     completeFrameCount++
                     val completionTime = frameEndTimestamp - frameStartTimestamp
                     frameCompletionTimes.add(completionTime)
-                    if (frameCompletionTimes.size > 10) {
-                        frameCompletionTimes.removeAt(0)
-                    }
+                    if (frameCompletionTimes.size > 10) frameCompletionTimes.removeAt(0)
                     avgFrameCompletionTime = frameCompletionTimes.average().toLong()
                 } else {
                     incompleteFrameCount++
                 }
 
-                // 记录统计信息
                 val completionRate = if (completeFrameCount + incompleteFrameCount > 0) {
                     (completeFrameCount * 100) / (completeFrameCount + incompleteFrameCount)
                 } else 0
-
                 log("Frame stats: Complete: $completeFrameCount, Incomplete: $incompleteFrameCount, " +
                         "Completion rate: $completionRate%, Avg time: $avgFrameCompletionTime ms")
             }
-
-            // 为下一帧重置
             resetFrameTracking()
+        }
+    }
+
+    private fun sendPointsToRenderer() {
+        val rendererCopy = renderer
+        val surfaceViewCopy = glSurfaceView
+
+        if (rendererCopy != null && surfaceViewCopy != null) {
+            synchronized(frameLock) {
+                val allPoints = ArrayList<LidarPoint>()
+                frameBuffer.forEach { frame ->
+                    allPoints.addAll(frame)
+                }
+
+                if (allPoints.isNotEmpty()) {
+                    val pointCount = allPoints.size
+                    log("Sending $pointCount points from $frameBufferSize frames to renderer")
+                    val pointArray = FloatArray(pointCount * 7)
+                    allPoints.forEachIndexed { index, point ->
+                        val offset = index * 7
+                        pointArray[offset] = point.x
+                        pointArray[offset + 1] = point.z
+                        pointArray[offset + 2] = -point.y
+                        pointArray[offset + 3] = point.intensity
+                        val norm = if (point.x != 0f || point.y != 0f || point.z != 0f) {
+                            val d = Math.sqrt((point.x * point.x + point.y * point.y + point.z * point.z).toDouble()).toFloat()
+                            if (d < 0.001f) 1f else d
+                        } else 1f
+                        pointArray[offset + 4] = point.x / norm
+                        pointArray[offset + 5] = point.z / norm
+                        pointArray[offset + 6] = -point.y / norm
+                    }
+
+                    surfaceViewCopy.queueEvent {
+                        rendererCopy.updatePoints(pointArray)
+                        surfaceViewCopy.requestRender()
+                        log("Render requested with $pointCount points")
+                        onStatusUpdate?.invoke("Rendered $pointCount points from $frameBufferSize frames")
+                    }
+                }
+            }
         }
     }
 
@@ -623,51 +693,6 @@ object UDPManager {
         }
 
         return isUpperPacket
-    }
-
-    private fun sendPointsToRenderer() {
-        val rendererCopy = renderer
-        val surfaceViewCopy = glSurfaceView
-
-        if (rendererCopy != null && surfaceViewCopy != null) {
-            synchronized(frameLock) {
-                if (latestCompleteFrame.isNotEmpty()) {
-                    val pointCount = latestCompleteFrame.size
-                    log("Sending $pointCount points to renderer")
-                    val pointArray = FloatArray(pointCount * 7)
-                    latestCompleteFrame.forEachIndexed { index, point ->
-                        val offset = index * 7
-                        pointArray[offset] = point.x
-                        pointArray[offset + 1] = point.z
-                        pointArray[offset + 2] = -point.y
-                        pointArray[offset + 3] = point.intensity
-                        val norm = if (point.x != 0f || point.y != 0f || point.z != 0f) {
-                            val d = Math.sqrt((point.x * point.x + point.y * point.y + point.z * point.z).toDouble()).toFloat()
-                            if (d < 0.001f) 1f else d
-                        } else 1f
-                        pointArray[offset + 4] = point.x / norm
-                        pointArray[offset + 5] = point.z / norm
-                        pointArray[offset + 6] = -point.y / norm
-                        if (index < 5) {
-                            log("Point $index: x=${point.x}, y=${point.y}, z=${point.z}, intensity=${point.intensity}")
-                        }
-                    }
-
-                    surfaceViewCopy.queueEvent {
-                        rendererCopy.updatePoints(pointArray)
-                        surfaceViewCopy.requestRender()
-                        log("Render requested with $pointCount points")
-                        onStatusUpdate?.invoke("Rendered $pointCount points")
-                    }
-                } else {
-                    log("No points in frame to render")
-                    onStatusUpdate?.invoke("No points in frame")
-                }
-            }
-        } else {
-            log("Renderer or SurfaceView is null")
-            onStatusUpdate?.invoke("Renderer or SurfaceView null")
-        }
     }
 
     private fun log(message: String) {

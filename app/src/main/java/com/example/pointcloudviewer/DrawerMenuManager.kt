@@ -12,7 +12,8 @@ class DrawerMenuManager(
     private val context: Context,
     private val drawerLayout: DrawerLayout,
     private val renderer: PointCloudRenderer,
-    private val legendView: LegendView
+    private val legendView: LegendView,
+    private val udpManager: UDPManager
 ) {
     @SuppressLint("WrongConstant", "UseSwitchCompatOrMaterialCode", "SetTextI18n")
     fun setupDrawer() {
@@ -98,6 +99,27 @@ class DrawerMenuManager(
         }
         drawerContent.addView(resetButton)
 
+        // 新增強度過濾開關
+        val intensityFilterLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        val intensityFilterLabel = TextView(context).apply {
+            text = "啟用強度過濾"
+            setTextColor(android.graphics.Color.BLACK)
+        }
+        val intensityFilterSwitch = Switch(context).apply {
+            isChecked = false  // 默認關閉
+            setOnCheckedChangeListener { _, isChecked ->
+                udpManager.setIntensityFilterEnabled(isChecked)
+            }
+        }
+        intensityFilterLayout.addView(intensityFilterLabel)
+        intensityFilterLayout.addView(intensityFilterSwitch)
+        drawerContent.addView(intensityFilterLayout)
+
+        // 點數比例控制
         val pointsRatioLayout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 8, 0, 8)
@@ -115,11 +137,11 @@ class DrawerMenuManager(
         }
         val pointsRatioSeekBar = SeekBar(context).apply {
             max = 100
-            progress = 100
+            progress = 100  // 默認顯示 100%
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val ratio = progress / 100.0f
-                    renderer.displayRatio = ratio
+                    udpManager.setDisplayRatio(ratio)
                     pointsRatioLabel.text = "顯示點數比例 (強度過濾): ${progress}%"
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}

@@ -7,7 +7,6 @@ import android.graphics.Color
 import android.view.Gravity
 import android.view.Window
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.ImageButton
 import androidx.constraintlayout.widget.ConstraintLayout
 import android.view.View
@@ -74,8 +73,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 不再需要底部按鈕，全部移到抽屜菜單中
-
         // 添加 LegendView 到底部中央
         legendView = LegendView(this).apply {
             mode = 0 // 顯示強度漸變條
@@ -126,8 +123,8 @@ class MainActivity : AppCompatActivity() {
         // 添加主內容到抽屜布局
         drawerLayout.addView(mainContent)
 
-        // 設置抽屜菜單
-        val drawerMenuManager = DrawerMenuManager(this, drawerLayout, renderer, legendView)
+        // 設置抽屜菜單，傳入 UDPManager
+        val drawerMenuManager = DrawerMenuManager(this, drawerLayout, renderer, legendView, UDPManager)
         drawerMenuManager.setupDrawer()
 
         // 設置主內容視圖

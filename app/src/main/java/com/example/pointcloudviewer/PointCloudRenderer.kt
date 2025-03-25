@@ -262,15 +262,17 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
                 GLES20.glVertexAttribPointer(intensityHandle, 1, GLES20.GL_FLOAT, false, 7 * 4, buffer)
                 GLES20.glEnableVertexAttribArray(intensityHandle)
 
-                // 根據顯示比例計算點數
-                val displayCount = (pointCount * displayRatio).toInt().coerceAtLeast(1)
-                GLES20.glDrawArrays(GLES20.GL_POINTS, 0, displayCount)
+                // 移除 displayRatio 相關計算，直接渲染所有點
+                GLES20.glDrawArrays(GLES20.GL_POINTS, 0, pointCount)
 
                 GLES20.glDisableVertexAttribArray(positionHandle)
                 GLES20.glDisableVertexAttribArray(intensityHandle)
             }
         }
     }
+
+    // 移除 setDisplayRatio 方法（如果之前有添加過）
+
 
     private fun drawGrid() {
         GLES20.glUseProgram(gridProgram)
@@ -339,9 +341,12 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         synchronized(this) {
             pointBuffer = createBuffer(points)
             pointCount = points.size / 7
-            updatePointsCenter(points)
-            isFirstFrameReceived = true
-            log("Updated points: $pointCount")
+            // 當有多個 frame 時，只更新一次中心點即可
+            if (!isFirstFrameReceived) {
+                updatePointsCenter(points)
+                isFirstFrameReceived = true
+            }
+            log("Updated points: $pointCount from multiple frames")
         }
     }
 
