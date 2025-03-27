@@ -19,9 +19,9 @@ object UDPManager {
     private const val TAG = "UDPManager"
     private const val UDP_PORT = 7000
     private const val SOCKET_BUFFER_SIZE = 1024 * 1024 * 1024
-    private const val PACKET_BUFFER_SIZE = 65535
+    private const val PACKET_BUFFER_SIZE = 100000
     private const val MAX_QUEUE_SIZE = 1000000
-    private const val FRAME_MARKER_INTERVAL = 1000
+    private const val FRAME_MARKER_INTERVAL = 4000
     private var onStatusUpdate: ((String) -> Unit)? = null
     private val frameBufferSize = 3  // 固定為 3 個 frame
     private val frameBuffer = ArrayList<ArrayList<LidarPoint>>(frameBufferSize)
@@ -137,6 +137,11 @@ object UDPManager {
     private var invalidPacketsCount = 0
     private var processedPacketsCount = 0
 
+    private const val QUEUE_WARNING_THRESHOLD = MAX_QUEUE_SIZE * 0.7 // 70% 時開始警告並漸進丟棄
+    private const val QUEUE_CRITICAL_THRESHOLD = MAX_QUEUE_SIZE * 0.9 // 90% 時加速丟棄
+    private const val RESET_INTERVAL_MS = 1000L // 每 1 秒檢查一次
+    private const val QUEUE_RESET_THRESHOLD = MAX_QUEUE_SIZE * 1.2 // 超過 120% 時重置
+
     private fun loadLookupTableFromResource(context: Context) {
         try {
             val inputStream = context.resources.openRawResource(
@@ -180,11 +185,12 @@ object UDPManager {
         echoMode = mode
     }
     init {
-        // 初始化 frame buffer
         repeat(frameBufferSize) {
-            frameBuffer.add(ArrayList())
+            frameBuffer.add(ArrayList<LidarPoint>(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME / frameBufferSize))
         }
+        nextFrame.ensureCapacity(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME)
     }
+    // 在 startUdpReceiver 中改進丟棄邏輯
     @OptIn(InternalCoroutinesApi::class)
     private fun startUdpReceiver(): Job {
         return CoroutineScope(Dispatchers.IO).launch {
@@ -203,7 +209,7 @@ object UDPManager {
                         val elapsedSeconds = (currentTime - lastUpdateTime) / 1_000_000_000.0
                         val bytesReceived = bytesInLastSecond.getAndSet(0)
                         val speedMBps = bytesReceived / (1024.0 * 1024.0) / elapsedSeconds
-                        val packetStats = "Valid: $validPacketsCount, Invalid: $invalidPacketsCount predstCount: $processedPacketsCount"
+                        val packetStats = "Valid: $validPacketsCount, Invalid: $invalidPacketsCount, Processed: $processedPacketsCount"
                         withContext(Dispatchers.Main) {
                             onDataRateUpdate?.invoke(speedMBps)
                             onStatusUpdate?.invoke("Packet stats: $packetStats")
@@ -214,9 +220,10 @@ object UDPManager {
                 try {
                     val receiveBuffer = ByteArray(PACKET_BUFFER_SIZE)
                     val receivePacket = DatagramPacket(receiveBuffer, receiveBuffer.size)
-                    var droppedPairs = 0 // 记录丢弃的数据包对数
-                    val packetPair = arrayOfNulls<ByteArray>(2) // 临时存储一对数据包
-                    var pairIndex = 0 // 0 表示等待上层，1 表示等待下层
+                    var droppedPairs = 0
+                    val packetPair = arrayOfNulls<ByteArray>(2)
+                    var pairIndex = 0
+                    var lastResetTime = System.currentTimeMillis()
 
                     while (isActive) {
                         socket.receive(receivePacket)
@@ -228,7 +235,6 @@ object UDPManager {
                         bytesInLastSecond.addAndGet(dataLength.toLong())
                         totalPacketsReceived.incrementAndGet()
 
-                        // 检查数据包类型
                         val packetType = if (dataLength == LidarConstants.PACKET_SIZE) {
                             (actualData[LidarConstants.DATA_START_OFFSET + 1].toInt() and 0xF0).toByte()
                         } else {
@@ -241,7 +247,6 @@ object UDPManager {
                                     packetPair[0] = actualData
                                     pairIndex = 1
                                 } else {
-                                    // 上层数据包已存在，丢弃旧的并重新开始
                                     packetPair[0] = actualData
                                     pairIndex = 1
                                 }
@@ -249,7 +254,6 @@ object UDPManager {
                             LidarConstants.PACKET_LOWER -> {
                                 if (pairIndex == 1 && packetPair[0] != null) {
                                     packetPair[1] = actualData
-                                    // 收到一对数据包，加入队列
                                     packetQueue.offer(packetPair[0]!!)
                                     packetQueue.offer(packetPair[1]!!)
                                     pairIndex = 0
@@ -259,32 +263,25 @@ object UDPManager {
                                         packetQueue.offer(FrameMarker.BYTES)
                                     }
                                 } else {
-                                    // 没有匹配的上层数据包，丢弃此下层数据包
                                     pairIndex = 0
                                 }
                             }
                             else -> {
-                                // 无效数据包，重置 pairIndex
                                 pairIndex = 0
                             }
                         }
 
-                        // 改进的丢弃逻辑：成对丢弃
-                        while (packetQueue.size > MAX_QUEUE_SIZE) {
-                            // 每次丢弃 2 个数据包（一条直线）
-                            val first = packetQueue.poll()
-                            val second = packetQueue.poll()
-                            if (first != null && second != null && first !== FrameMarker.BYTES && second !== FrameMarker.BYTES) {
-                                droppedPairs++
-                                log("Dropped a pair of packets (1 line), total dropped pairs: $droppedPairs")
-                            } else if (first === FrameMarker.BYTES) {
-                                // 如果遇到 Frame Marker，只丢弃它，然后继续检查
-                                packetQueue.offer(second) // 把第二个放回去
-                            } else {
-                                // 无法成对丢弃，退出循环等待下次处理
-                                packetQueue.offer(first) // 把第一个放回去
-                                break
-                            }
+                        // 定時清空隊列（每秒）
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastResetTime >= RESET_INTERVAL_MS) { // RESET_INTERVAL_MS = 1000L
+                            log("Resetting packetQueue after 1 second, size was ${packetQueue.size}")
+                            packetQueue.clear()
+                            droppedPairs = 0
+                            packetCounter = 0
+                            pairIndex = 0
+                            packetPair[0] = null
+                            packetPair[1] = null
+                            lastResetTime = currentTime
                         }
 
                         receivePacket.setLength(receiveBuffer.size)
@@ -472,15 +469,12 @@ object UDPManager {
                 log("${if (isComplete) "Complete" else "Forced ($reason)"} frame with $frameSize points ($completeness% complete)")
 
                 synchronized(frameLock) {
+                    // 原始代碼
                     val pointsToStore = if (enableIntensityFilter) {
-                        // 按強度排序（從高到低）
                         val sortedPoints = nextFrame.sortedByDescending { it.intensity }
-                        // 根據 displayRatio 計算要保留的點數
                         val pointsToKeep = (frameSize * displayRatio).toInt().coerceAtLeast(1)
-                        // 保留強度較高的點
                         sortedPoints.take(pointsToKeep)
                     } else {
-                        // 不啟用強度過濾，直接使用所有點
                         nextFrame.toList()
                     }
 

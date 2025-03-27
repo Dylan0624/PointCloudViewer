@@ -339,11 +339,34 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     fun updatePoints(points: FloatArray) {
         synchronized(this) {
-            pointBuffer = createBuffer(points)
-            pointCount = points.size / 7
-            // 當有多個 frame 時，只更新一次中心點即可
+            val maxRenderPoints = 750_000 // 設置最大渲染點數，例如 100 萬點
+            val totalPoints = points.size / 7 // 每個點有 7 個 float
+
+            if (totalPoints <= maxRenderPoints) {
+                // 如果點數未超過上限，直接使用全部點
+                pointBuffer = createBuffer(points)
+                pointCount = totalPoints
+            } else {
+                // 超過上限，進行均勻過濾
+                val sampledPoints = FloatArray(maxRenderPoints * 7)
+                val step = (totalPoints - 1).toFloat() / (maxRenderPoints - 1) // 改進步長計算
+                var srcIndexFloat = 0f
+
+                for (i in 0 until maxRenderPoints) {
+                    val srcIndex = (srcIndexFloat.toInt() * 7).coerceAtMost(points.size - 7)
+                    val destIndex = i * 7
+                    System.arraycopy(points, srcIndex, sampledPoints, destIndex, 7)
+                    srcIndexFloat += step // 逐步增加索引
+                }
+
+                pointBuffer = createBuffer(sampledPoints)
+                pointCount = maxRenderPoints
+                log("Points exceed limit $totalPoints > $maxRenderPoints, filtered to $maxRenderPoints points")
+            }
+
+            // 當有多個 frame 時，只更新一次中心點
             if (!isFirstFrameReceived) {
-                updatePointsCenter(points)
+                updatePointsCenter(points) // 使用原始數據計算中心點
                 isFirstFrameReceived = true
             }
             log("Updated points: $pointCount from multiple frames")
