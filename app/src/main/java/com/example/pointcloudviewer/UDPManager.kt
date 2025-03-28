@@ -23,7 +23,7 @@ object UDPManager {
     private const val MAX_QUEUE_SIZE = 1000000
     private const val FRAME_MARKER_INTERVAL = 4000
     private var onStatusUpdate: ((String) -> Unit)? = null
-    private val frameBufferSize = 3  // 固定為 3 個 frame
+    private val frameBufferSize = 1  // 固定為 3 個 frame
     private val frameBuffer = ArrayList<ArrayList<LidarPoint>>(frameBufferSize)
     private var currentFrameIndex = 0
     private var displayRatio = 1.0f  // 顯示比例，默認為 1.0（顯示全部）
@@ -50,7 +50,7 @@ object UDPManager {
         val HEADER_MAGIC = byteArrayOf(0x55.toByte(), 0xaa.toByte(), 0x5a.toByte(), 0xa5.toByte())
         const val HEADER_START_OFFSET = 0
         const val DATA_START_OFFSET = 32
-        const val LINES_PER_FRAME = 1990
+        const val LINES_PER_FRAME = 6000
         const val AZIMUTH_RESOLUTION = 0.0439f
         const val ELEVATION_START_UPPER = 12.975f
         const val ELEVATION_START_LOWER = -0.025f
@@ -130,7 +130,7 @@ object UDPManager {
     private var glSurfaceView: GLSurfaceView? = null
     private var renderer: PointCloudRenderer? = null
     private var onDataRateUpdate: ((Double) -> Unit)? = null
-    private var echoMode = EchoMode.ECHO_MODE_ALL
+    private var echoMode = EchoMode.ECHO_MODE_2ND
     private var context: Context? = null
     private var isRendering = AtomicBoolean(false)
     private var validPacketsCount = 0
@@ -141,6 +141,11 @@ object UDPManager {
     private const val QUEUE_CRITICAL_THRESHOLD = MAX_QUEUE_SIZE * 0.9 // 90% 時加速丟棄
     private const val RESET_INTERVAL_MS = 1000L // 每 1 秒檢查一次
     private const val QUEUE_RESET_THRESHOLD = MAX_QUEUE_SIZE * 1.2 // 超過 120% 時重置
+
+
+    private var resetInProgress = false // 添加：標記是否正在重置
+    private var skipNextRender = false
+
 
     private fun loadLookupTableFromResource(context: Context) {
         try {
@@ -281,6 +286,13 @@ object UDPManager {
                             pairIndex = 0
                             packetPair[0] = null
                             packetPair[1] = null
+                            resetInProgress = true // 添加：標記重置開始
+                            synchronized(frameLock) { // 添加：同步訪問 nextFrame
+                                nextFrame.clear() // 添加：清空正在收集的 nextFrame
+                                resetFrameTracking() // 添加：重置幀追蹤狀態
+                            }
+                            skipNextRender = true // 添加：跳過下一次渲染
+                            resetInProgress = false // 添加：重置完成
                             lastResetTime = currentTime
                         }
 
@@ -514,6 +526,12 @@ object UDPManager {
 
         if (rendererCopy != null && surfaceViewCopy != null) {
             synchronized(frameLock) {
+                if (skipNextRender) { // 添加：檢查是否跳過渲染
+                    log("Skipping render due to reset")
+                    skipNextRender = false // 添加：重置標誌
+                    return // 添加：跳過這次渲染
+                }
+
                 val allPoints = ArrayList<LidarPoint>()
                 frameBuffer.forEach { frame ->
                     allPoints.addAll(frame)

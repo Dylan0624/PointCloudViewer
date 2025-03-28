@@ -23,6 +23,7 @@ class DrawerMenuManager(
             setBackgroundColor(android.graphics.Color.parseColor("#FFFFFF"))
         }
 
+        // 顯示座標軸開關
         val axisSwitchLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -37,6 +38,7 @@ class DrawerMenuManager(
         axisSwitchLayout.addView(axisSwitch)
         drawerContent.addView(axisSwitchLayout)
 
+        // 顯示網格開關
         val gridSwitchLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -51,6 +53,7 @@ class DrawerMenuManager(
         gridSwitchLayout.addView(gridSwitch)
         drawerContent.addView(gridSwitchLayout)
 
+        // 顯示圖例開關
         val legendSwitchLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -67,6 +70,7 @@ class DrawerMenuManager(
         legendSwitchLayout.addView(legendSwitch)
         drawerContent.addView(legendSwitchLayout)
 
+        // 色彩模式選擇
         val colorModeLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -89,6 +93,7 @@ class DrawerMenuManager(
         colorModeLayout.addView(colorModeSpinner)
         drawerContent.addView(colorModeLayout)
 
+        // 重置視圖按鈕
         val resetButton = Button(context).apply {
             text = "重置視圖"
             setOnClickListener {
@@ -99,7 +104,7 @@ class DrawerMenuManager(
         }
         drawerContent.addView(resetButton)
 
-        // 新增強度過濾開關
+        // 強度過濾開關
         val intensityFilterLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -110,7 +115,7 @@ class DrawerMenuManager(
             setTextColor(android.graphics.Color.BLACK)
         }
         val intensityFilterSwitch = Switch(context).apply {
-            isChecked = false  // 默認關閉
+            isChecked = false
             setOnCheckedChangeListener { _, isChecked ->
                 udpManager.setIntensityFilterEnabled(isChecked)
             }
@@ -137,7 +142,7 @@ class DrawerMenuManager(
         }
         val pointsRatioSeekBar = SeekBar(context).apply {
             max = 100
-            progress = 100  // 默認顯示 100%
+            progress = 100
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val ratio = progress / 100.0f
@@ -159,11 +164,47 @@ class DrawerMenuManager(
         pointsRatioLayout.addView(pointsRatioSeekBar)
         drawerContent.addView(pointsRatioLayout)
 
+        // 新增 Echo Mode 選擇（按照 1、2、All 順序）
+        val echoModeLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        val echoModeLabel = TextView(context).apply {
+            text = "Echo Mode"
+            setTextColor(android.graphics.Color.BLACK)
+        }
+        val echoModeRadioGroup = RadioGroup(context).apply {
+            orientation = RadioGroup.VERTICAL
+        }
+        val echoModes = listOf(
+            Pair("1st Echo", UDPManager.EchoMode.ECHO_MODE_1ST),
+            Pair("2nd Echo", UDPManager.EchoMode.ECHO_MODE_2ND),
+            Pair("All Echoes", UDPManager.EchoMode.ECHO_MODE_ALL)
+        )
+        echoModes.forEachIndexed { index, (label, mode) ->
+            val radioButton = RadioButton(context).apply {
+                text = label
+                id = index // 設置唯一的 ID
+                setTextColor(android.graphics.Color.BLACK) // 設置文字為黑色
+                setOnClickListener {
+                    udpManager.setEchoMode(mode)
+                }
+            }
+            echoModeRadioGroup.addView(radioButton)
+        }
+        // 設置默認選中項（初始為 ECHO_MODE_2ND，對應索引 1）
+        echoModeRadioGroup.check(1)
+        echoModeLayout.addView(echoModeLabel)
+        echoModeLayout.addView(echoModeRadioGroup)
+        drawerContent.addView(echoModeLayout)
+
+        // 設置抽屜布局參數
         val drawerParams = DrawerLayout.LayoutParams(
             DrawerLayout.LayoutParams.WRAP_CONTENT,
             DrawerLayout.LayoutParams.MATCH_PARENT
-        )
-        drawerParams.gravity = Gravity.START
+        ).apply {
+            gravity = Gravity.START
+        }
         drawerContent.layoutParams = drawerParams
 
         drawerLayout.addView(drawerContent)

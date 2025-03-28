@@ -339,7 +339,7 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     fun updatePoints(points: FloatArray) {
         synchronized(this) {
-            val maxRenderPoints = 750_000 // 設置最大渲染點數，例如 100 萬點
+            val maxRenderPoints = 500_000 // 設置最大渲染點數，例如 100 萬點
             val totalPoints = points.size / 7 // 每個點有 7 個 float
 
             if (totalPoints <= maxRenderPoints) {
