@@ -140,7 +140,7 @@ app/
 │   │   │   ├── PointCloudRenderer.kt      // 點雲渲染器
 │   │   │   ├── UDPManager.kt              // UDP管理器
 │   │   │   ├── TouchController.kt         // 觸控控制器
-│   │   │   ├── DrawerMenuManager.kt       // 抽屜選單管理器
+│   │   │   ├── DrawerMenuManager.kt       // 選單管理器
 │   │   │   └── LegendView.kt              // 圖例視圖
 │   │   ├── res/
 │   │   │   ├── layout/
