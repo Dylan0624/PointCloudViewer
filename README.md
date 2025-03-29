@@ -8,32 +8,32 @@
 
 - 高效數據處理：
 
-  - 在 7000 端口接收 UDP 數據
-  - 支持多種 Echo 模式（1st Echo、2nd Echo、All Echoes）
-  - 智能幀邊界檢測和重建算法
-  - 高效數據過濾和處理機制
+    - 在 7000 端口接收 UDP 數據
+    - 支持多種 Echo 模式（1st Echo、2nd Echo、All Echoes）
+    - 智能幀邊界檢測和重建算法
+    - 高效數據過濾和處理機制
 
 - 互動式查看控制：
 
-  - 捏合手勢縮放
-  - 單指旋轉
-  - 雙指平移
-  - 雙擊重置視圖
+    - 捏合手勢縮放
+    - 單指旋轉
+    - 雙指平移
+    - 雙擊重置視圖
 
 - 視覺化選項：
 
-  - 切換座標軸顯示
-  - 切換網格線顯示
-  - 基於強度的著色
-  - 控制點顯示比例
-  - 強度過濾功能
+    - 切換座標軸顯示
+    - 切換網格線顯示
+    - 基於強度的著色
+    - 控制點顯示比例
+    - 強度過濾功能
 
 - 使用者界面：
 
-  - 抽屜式選單進行設置
-  - 強度圖例顯示色彩漸變
-  - 全屏沉浸式視圖
-  - 支持橫屏顯示模式
+    - 抽屜式選單進行設置
+    - 強度圖例顯示色彩漸變
+    - 全屏沉浸式視圖
+    - 支持橫屏顯示模式
 
 ## 技術架構
 
@@ -41,29 +41,56 @@
 
 - 主要界面與控制：
 
-  - `MainActivity.kt`：主要入口點和 UI 控制器
-  - `DrawerMenuManager.kt`：管理設置抽屜 UI
-  - `LegendView.kt`：用於顯示強度色彩圖例的自定義視圖
+    - `MainActivity.kt`：主要入口點和 UI 控制器
+    - `DrawerMenuManager.kt`：管理設置抽屜 UI
+    - `LegendView.kt`：用於顯示強度色彩圖例的自定義視圖
 
 - 點雲處理與渲染：
 
-  - `PointCloudRenderer.kt`：基於 OpenGL ES 2.0 的 3D 點雲視覺化渲染器
-  - `UDPManager.kt`：管理 UDP 套接字通訊和數據處理
-  - `TouchController.kt`：處理視圖操作的手勢識別
+    - `PointCloudRenderer.kt`：基於 OpenGL ES 2.0 的 3D 點雲視覺化渲染器
+    - `UDPManager.kt`：管理 UDP 套接字通訊和數據處理
+    - `TouchController.kt`：處理視圖操作的手勢識別
+
+### 數據處理流程
+
+下圖展示了 LiDAR 數據從接收到渲染的完整處理流程：
+
+```mermaid
+flowchart TD
+    A[UDP Data Packets] -->|Port 7000| B[UDPManager]
+    B -->|Packet Validation| C{Valid Packet?}
+    C -->|No| D[Discard]
+    C -->|Yes| E[Parse UDP Packet]
+    E -->|Extract Points| F[Point Buffer]
+    F -->|Azimuth Tracking| G{Frame Complete?}
+    G -->|No| H[Add to Next Frame]
+    G -->|Yes| I[Process Complete Frame]
+    I -->|Apply Intensity Filter| J[Filtered Frame]
+    J -->|Update Buffer| K[Frame Buffer]
+    K -->|Convert to OpenGL| L[Point Cloud Renderer]
+    L -->|Render| M[GLSurfaceView]
+    
+    N[User Interaction] -->|Gestures| O[TouchController]
+    O -->|Rotation/Scale/Pan| L
+    
+    P[Settings] -->|Menu Options| Q[DrawerMenuManager]
+    Q -->|Update Settings| B
+    Q -->|Visualization Options| L
+```
 
 ### 數據處理機制
 
 - 幀識別與處理：
 
-  - 智能角度和深度檢測演算法
-  - 高效的數據包解析與合併
-  - 支持多回波模式 (Echo Mode) 數據處理
+    - 智能角度和深度檢測演算法
+    - 高效的數據包解析與合併
+    - 支持多回波模式 (Echo Mode) 數據處理
 
 - 數據優化：
 
-  - 使用查找表 (lookup table) 進行角度校準
-  - 記憶體池和緩衝區管理
-  - 數據量動態調整機制
+    - 使用查找表 (lookup table) 進行角度校準
+    - 記憶體池和緩衝區管理
+    - 數據量動態調整機制
 
 ## 系統需求
 
@@ -77,18 +104,18 @@
 
 2. 視圖控制：
 
-   - 旋轉：用一根手指觸摸並拖曳
-   - 縮放：用兩根手指進行捏合
-   - 平移：用兩根手指觸摸並拖曳
-   - 重置視圖：在螢幕上任意位置雙擊
+    - 旋轉：用一根手指觸摸並拖曳
+    - 縮放：用兩根手指進行捏合
+    - 平移：用兩根手指觸摸並拖曳
+    - 重置視圖：在螢幕上任意位置雙擊
 
 3. 設置：點擊左上角的漢堡圖標進入選單
 
-   - 切換坐標軸和網格線顯示
-   - 調整點顯示比例以優化性能
-   - 切換強度過濾功能
-   - 選擇 Echo Mode (1st、2nd、All)
-   - 切換強度圖例顯示
+    - 切換坐標軸和網格線顯示
+    - 調整點顯示比例以優化性能
+    - 切換強度過濾功能
+    - 選擇 Echo Mode (1st、2nd、All)
+    - 切換強度圖例顯示
 
 ## 技術細節
 
