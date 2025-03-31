@@ -2,6 +2,8 @@
 
 這是一款功能強大的 Android 應用程式，用於視覺化從 LiDAR 感測器透過 UDP 接收的 3D 點雲數據。本應用具有即時 3D 視覺化界面和手勢控制功能，讓用戶能夠互動式查看點雲數據。
 
+![app畫面.jpg](docs%2Fimages%2Fapp%B5%65%AD%B1.jpg)
+
 ## 功能特點
 
 - **即時點雲視覺化**：渲染從 LiDAR 感測器串流的 3D 點雲數據
@@ -55,28 +57,7 @@
 
 下圖展示了 LiDAR 數據從接收到渲染的完整處理流程：
 
-```mermaid
-flowchart TD
-    A[UDP Data Packets] -->|Port 7000| B[UDPManager]
-    B -->|Packet Validation| C{Valid Packet?}
-    C -->|No| D[Discard]
-    C -->|Yes| E[Parse UDP Packet]
-    E -->|Extract Points| F[Point Buffer]
-    F -->|Azimuth Tracking| G{Frame Complete?}
-    G -->|No| H[Add to Next Frame]
-    G -->|Yes| I[Process Complete Frame]
-    I -->|Apply Intensity Filter| J[Filtered Frame]
-    J -->|Update Buffer| K[Frame Buffer]
-    K -->|Convert to OpenGL| L[Point Cloud Renderer]
-    L -->|Render| M[GLSurfaceView]
-    
-    N[User Interaction] -->|Gestures| O[TouchController]
-    O -->|Rotation/Scale/Pan| L
-    
-    P[Settings] -->|Menu Options| Q[DrawerMenuManager]
-    Q -->|Update Settings| B
-    Q -->|Visualization Options| L
-```
+![流程圖.png](docs%2Fimages%2F%AC%79%B5%7B%B9%CF.png)
 
 ### 數據處理機制
 
