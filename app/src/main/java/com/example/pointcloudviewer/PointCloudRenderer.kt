@@ -56,6 +56,19 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     private var maxRenderPoints = 500_000
 
+    private var originalPoints: FloatArray? = null
+    // 新增：用於找到最近點的數據結構
+    data class PickedPointInfo(
+        val x: Float,
+        val y: Float,
+        val z: Float,
+        val distance: Float,
+        val intensity: Float
+    )
+    // 新增：屏幕寬度和高度
+    private var screenWidth = 0
+    private var screenHeight = 0
+
     private val vertexShaderCode = """
         uniform mat4 uMVPMatrix;
         attribute vec4 aPosition;
@@ -240,6 +253,10 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         // 修改 FOV 為 45 度
         Matrix.perspectiveM(projectionMatrix, 0, 45f, ratio, 0.1f, 100f)
         updateMVPMatrix()
+
+        // 保存屏幕尺寸
+        screenWidth = width
+        screenHeight = height
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -341,6 +358,9 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     fun updatePoints(points: FloatArray) {
         synchronized(this) {
+            // 保存原始點數據供點選擇使用
+            originalPoints = points.clone()
+
             pointBuffer?.clear() // 如果 pointBuffer 是 FloatBuffer
             pointCount = 0       // 重置點計數
             val totalPoints = points.size / 7 // 每個點有 7 個 float
@@ -374,6 +394,108 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
             }
             log("Updated points: $pointCount from multiple frames")
         }
+    }
+
+    fun findNearestPoint(screenX: Float, screenY: Float): PickedPointInfo? {
+        val points = originalPoints ?: return null
+
+        // 轉換屏幕坐標為 OpenGL 標準化坐標 (-1 到 1)
+        val normalizedX = (2.0f * screenX / screenWidth - 1.0f)
+        val normalizedY = (1.0f - 2.0f * screenY / screenHeight)
+
+        // 創建射線
+        val rayStart = floatArrayOf(normalizedX, normalizedY, -1.0f, 1.0f)
+        val rayEnd = floatArrayOf(normalizedX, normalizedY, 1.0f, 1.0f)
+
+        // 計算逆矩陣用於反向轉換
+        val invertedMVP = FloatArray(16)
+        if (!Matrix.invertM(invertedMVP, 0, mvpMatrix, 0)) {
+            return null // 無法計算逆矩陣
+        }
+
+        // 將射線起點和終點轉換到世界空間
+        val worldRayStart = floatArrayOf(0f, 0f, 0f, 0f)
+        val worldRayEnd = floatArrayOf(0f, 0f, 0f, 0f)
+
+        Matrix.multiplyMV(worldRayStart, 0, invertedMVP, 0, rayStart, 0)
+        Matrix.multiplyMV(worldRayEnd, 0, invertedMVP, 0, rayEnd, 0)
+
+        // 同質座標除法
+        for (i in 0..2) {
+            worldRayStart[i] /= worldRayStart[3]
+            worldRayEnd[i] /= worldRayEnd[3]
+        }
+
+        // 計算射線方向
+        val rayDirection = floatArrayOf(
+            worldRayEnd[0] - worldRayStart[0],
+            worldRayEnd[1] - worldRayStart[1],
+            worldRayEnd[2] - worldRayStart[2]
+        )
+
+        // 尋找最近的點
+        var closestDistance = Float.MAX_VALUE
+        var closestPoint: PickedPointInfo? = null
+
+        for (i in points.indices step 7) {
+            val x = points[i]
+            val y = points[i + 1]
+            val z = points[i + 2]
+            val intensity = points[i + 3]
+
+            // 計算點到射線的距離
+            val distance = distancePointToRay(floatArrayOf(x, y, z), worldRayStart, rayDirection)
+
+            // 如果這個點比之前找到的最近點更近，則更新最近點
+            if (distance < closestDistance) {
+                closestDistance = distance
+
+                // 計算實際距離（從原點到點的距離）
+                val actualDistance = Math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
+
+                closestPoint = PickedPointInfo(x, y, z, actualDistance, intensity)
+            }
+        }
+
+        return closestPoint
+    }
+
+    // 計算點到射線的距離
+    private fun distancePointToRay(point: FloatArray, rayOrigin: FloatArray, rayDirection: FloatArray): Float {
+        // 計算點到射線原點的向量
+        val v = floatArrayOf(
+            point[0] - rayOrigin[0],
+            point[1] - rayOrigin[1],
+            point[2] - rayOrigin[2]
+        )
+
+        // 計算射線方向的單位向量
+        val rayDirLength = Math.sqrt((rayDirection[0] * rayDirection[0] +
+                rayDirection[1] * rayDirection[1] +
+                rayDirection[2] * rayDirection[2]).toDouble()).toFloat()
+
+        val rayDirNorm = floatArrayOf(
+            rayDirection[0] / rayDirLength,
+            rayDirection[1] / rayDirLength,
+            rayDirection[2] / rayDirLength
+        )
+
+        // 計算點在射線方向上的投影長度
+        val t = v[0] * rayDirNorm[0] + v[1] * rayDirNorm[1] + v[2] * rayDirNorm[2]
+
+        // 計算最近點
+        val nearestPoint = floatArrayOf(
+            rayOrigin[0] + rayDirNorm[0] * t,
+            rayOrigin[1] + rayDirNorm[1] * t,
+            rayOrigin[2] + rayDirNorm[2] * t
+        )
+
+        // 計算點到最近點的距離
+        return Math.sqrt(
+            Math.pow(point[0] - nearestPoint[0].toDouble(), 2.0) +
+                    Math.pow(point[1] - nearestPoint[1].toDouble(), 2.0) +
+                    Math.pow(point[2] - nearestPoint[2].toDouble(), 2.0)
+        ).toFloat()
     }
 
     fun setDistanceScale(scale: Float) {

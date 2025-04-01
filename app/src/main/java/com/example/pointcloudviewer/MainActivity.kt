@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var menuButton: ImageButton
     private lateinit var legendView: LegendView
     private lateinit var fpsTextView: TextView
+    private lateinit var pointInfoTextView: TextView  // 新增：顯示選中點信息的 TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +54,8 @@ class MainActivity : AppCompatActivity() {
                 ConstraintLayout.LayoutParams.MATCH_PARENT
             )
         }
+
+        // FPS 文字視圖
         fpsTextView = TextView(this).apply {
             id = View.generateViewId()
             text = "FPS: 0"
@@ -68,6 +71,25 @@ class MainActivity : AppCompatActivity() {
                 setMargins(0, 16, 16, 0)  // 右上角留16dp邊距
             }
         }
+
+        // 新增：點信息文字視圖
+        pointInfoTextView = TextView(this).apply {
+            id = View.generateViewId()
+            text = ""  // 初始為空
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.END or Gravity.TOP
+            layoutParams = ConstraintLayout.LayoutParams(
+                ConstraintLayout.LayoutParams.WRAP_CONTENT,
+                ConstraintLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topToBottom = fpsTextView.id  // 放在 FPS 文字下方
+                rightToRight = ConstraintLayout.LayoutParams.PARENT_ID
+                setMargins(0, 4, 16, 0)  // 與 FPS 文字保持相同的右邊距，上邊距小一些
+            }
+            visibility = View.GONE  // 初始時隱藏
+        }
+
         // 設置初始距離縮放因子
         renderer.setDistanceScale(1.0f)
 
@@ -104,7 +126,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 初始化手勢控制器
+        // 在 MainActivity.kt 的 onCreate 方法中
+
+// 初始化手勢控制器（改進的長按處理）
         touchController = TouchController(
             context = this,
             onRotation = { dx, dy ->
@@ -122,6 +146,10 @@ class MainActivity : AppCompatActivity() {
             onReset = {
                 renderer.resetTransformation()
                 glSurfaceView.requestRender()
+            },
+            onLongPress = { x, y ->
+                // 處理長按事件，顯示選中點的信息
+                handleLongPress(x, y)
             }
         )
 
@@ -136,6 +164,7 @@ class MainActivity : AppCompatActivity() {
         mainContent.addView(menuButton)
         mainContent.addView(legendView)
         mainContent.addView(fpsTextView)
+        mainContent.addView(pointInfoTextView) // 新增點信息視圖
 
         // 添加主內容到抽屜布局
         drawerLayout.addView(mainContent)
@@ -161,6 +190,26 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         )
+    }
+
+    // 新增：處理長按事件的函數
+    private fun handleLongPress(x: Float, y: Float) {
+        val pickedPoint = renderer.findNearestPoint(x, y)
+
+        runOnUiThread {
+            if (pickedPoint != null) {
+                // 格式化距離和強度信息
+                val distanceStr = String.format("%.2f", pickedPoint.distance)
+                val intensityStr = String.format("%.0f", pickedPoint.intensity)
+
+                // 更新文本信息
+                pointInfoTextView.text = "距離: ${distanceStr}m | 強度: $intensityStr"
+                pointInfoTextView.visibility = View.VISIBLE
+            } else {
+                // 如果沒有找到點，隱藏信息
+                pointInfoTextView.visibility = View.GONE
+            }
+        }
     }
 
     override fun onResume() {
