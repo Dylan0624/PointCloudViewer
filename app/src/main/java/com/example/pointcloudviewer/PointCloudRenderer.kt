@@ -54,6 +54,8 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     private val viewMatrix = FloatArray(16)
     private val projectionMatrix = FloatArray(16)
 
+    private var maxRenderPoints = 500_000
+
     private val vertexShaderCode = """
         uniform mat4 uMVPMatrix;
         attribute vec4 aPosition;
@@ -341,7 +343,6 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         synchronized(this) {
             pointBuffer?.clear() // 如果 pointBuffer 是 FloatBuffer
             pointCount = 0       // 重置點計數
-            val maxRenderPoints = 500_000 // 設置最大渲染點數，例如 100 萬點
             val totalPoints = points.size / 7 // 每個點有 7 個 float
 
             if (totalPoints <= maxRenderPoints) {
@@ -477,4 +478,11 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     }
 
     fun hasReceivedFirstFrame(): Boolean = isFirstFrameReceived
+
+    fun setMaxRenderPoints(maxPoints: Int) {
+        maxRenderPoints = maxPoints
+        // 可以在這裡添加日誌輸出
+        log("Maximum render points set to: $maxRenderPoints")
+    }
+
 }
