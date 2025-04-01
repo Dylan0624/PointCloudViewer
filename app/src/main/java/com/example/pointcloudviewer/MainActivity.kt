@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.widget.ImageButton
 import androidx.constraintlayout.widget.ConstraintLayout
 import android.view.View
+import android.widget.TextView
 import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
 
@@ -20,6 +21,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var menuButton: ImageButton
     private lateinit var legendView: LegendView
+    private lateinit var fpsTextView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +53,21 @@ class MainActivity : AppCompatActivity() {
                 ConstraintLayout.LayoutParams.MATCH_PARENT
             )
         }
-
+        fpsTextView = TextView(this).apply {
+            id = View.generateViewId()
+            text = "FPS: 0"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.END or Gravity.TOP
+            layoutParams = ConstraintLayout.LayoutParams(
+                ConstraintLayout.LayoutParams.WRAP_CONTENT,
+                ConstraintLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+                rightToRight = ConstraintLayout.LayoutParams.PARENT_ID
+                setMargins(0, 16, 16, 0)  // 右上角留16dp邊距
+            }
+        }
         // 設置初始距離縮放因子
         renderer.setDistanceScale(1.0f)
 
@@ -119,6 +135,7 @@ class MainActivity : AppCompatActivity() {
         mainContent.addView(glSurfaceView)
         mainContent.addView(menuButton)
         mainContent.addView(legendView)
+        mainContent.addView(fpsTextView)
 
         // 添加主內容到抽屜布局
         drawerLayout.addView(mainContent)
@@ -137,8 +154,11 @@ class MainActivity : AppCompatActivity() {
             onDataRateUpdate = { _ ->
                 // 移除數據速率更新處理
             },
-            onStatusUpdate = { _ ->
-                // 移除狀態更新處理
+            onStatusUpdate = { status ->
+                // 可選：如果你想保留原有的狀態更新
+                runOnUiThread {
+                    fpsTextView.text = status  // 這裡假設 status 會包含 FPS 信息
+                }
             }
         )
     }

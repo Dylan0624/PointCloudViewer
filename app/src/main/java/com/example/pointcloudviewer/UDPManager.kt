@@ -50,7 +50,7 @@ object UDPManager {
         val HEADER_MAGIC = byteArrayOf(0x55.toByte(), 0xaa.toByte(), 0x5a.toByte(), 0xa5.toByte())
         const val HEADER_START_OFFSET = 0
         const val DATA_START_OFFSET = 32
-        const val LINES_PER_FRAME = 6000
+        const val LINES_PER_FRAME = 2000
         const val AZIMUTH_RESOLUTION = 0.0439f
         const val ELEVATION_START_UPPER = 12.975f
         const val ELEVATION_START_LOWER = -0.025f
@@ -182,7 +182,6 @@ object UDPManager {
             CoroutineScope(Dispatchers.Default).launch {
                 startFrameChecker()
             }
-            onStatusUpdate?.invoke("UDP Manager Initialized with improved azimuth detection")
         }
     }
 
@@ -217,7 +216,6 @@ object UDPManager {
                         val packetStats = "Valid: $validPacketsCount, Invalid: $invalidPacketsCount, Processed: $processedPacketsCount"
                         withContext(Dispatchers.Main) {
                             onDataRateUpdate?.invoke(speedMBps)
-                            onStatusUpdate?.invoke("Packet stats: $packetStats")
                         }
                         lastUpdateTime = currentTime
                     }
@@ -560,7 +558,6 @@ object UDPManager {
                         rendererCopy.updatePoints(pointArray)
                         surfaceViewCopy.requestRender()
                         log("Render requested with $pointCount points")
-                        onStatusUpdate?.invoke("Rendered $pointCount points from $frameBufferSize frames")
                     }
                 }
             }
@@ -570,6 +567,8 @@ object UDPManager {
     private suspend fun startFrameChecker() {
         var lastQueueSize = 0
         var stallCounter = 0
+        var frameCount = 0  // 添加：計數渲染的幀數
+        var lastFpsTime = System.currentTimeMillis()  // 添加：記錄上一次 FPS 計算的時間
 
         while (true) {
             if (isFrameReady.get()) {
@@ -577,6 +576,24 @@ object UDPManager {
                 sendPointsToRenderer()
                 isFrameReady.set(false)
                 isRendering.set(false)
+                frameCount++  // 每渲染一幀計數加1
+            }
+
+            val currentTime = System.currentTimeMillis()
+            val elapsedTime = currentTime - lastFpsTime
+
+            // 每秒更新一次FPS
+            if (elapsedTime >= 1000) {
+                val fps = if (elapsedTime > 0) {
+                    (frameCount * 1000.0 / elapsedTime).toInt()
+                } else 0
+
+                // 只顯示FPS
+                onStatusUpdate?.invoke("FPS: ${fps * 2}")
+
+                // 重置計數器
+                frameCount = 0
+                lastFpsTime = currentTime
             }
 
             val currentQueueSize = packetQueue.size
@@ -584,7 +601,7 @@ object UDPManager {
                 stallCounter++
                 if (stallCounter > 20) {
                     log("Force creating a frame after stall")
-                    checkFrameCompletion(true, "Queue stall")  // 使用帧完成检查功能
+                    checkFrameCompletion(true, "Queue stall")
                     stallCounter = 0
                 }
             } else {
@@ -592,29 +609,6 @@ object UDPManager {
             }
 
             lastQueueSize = currentQueueSize
-            val pointsCollected = nextFrame.size
-
-            // 增强状态更新，包含帧完整性信息
-            val frameStatus = if (foundFrameStart && !foundFrameEnd) {
-                "Partial frame (started)"
-            } else if (!foundFrameStart && !foundFrameEnd) {
-                "Collecting points"
-            } else {
-                "Frame complete"
-            }
-
-            val completionRate = if (completeFrameCount + incompleteFrameCount > 0) {
-                (completeFrameCount * 100) / (completeFrameCount + incompleteFrameCount)
-            } else 0
-
-            val azimuthInfo = if (foundFrameStart) {
-                ", Azimuth: $minAzimuthInFrame° - $currentLineAzimuth°"
-            } else {
-                ", Current azimuth: $currentLineAzimuth°"
-            }
-
-            onStatusUpdate?.invoke("Packets: $currentQueueSize, Points: $pointsCollected$azimuthInfo\n" +
-                    "Frame: $frameStatus, Completion: $completionRate%")
             delay(250)
         }
     }

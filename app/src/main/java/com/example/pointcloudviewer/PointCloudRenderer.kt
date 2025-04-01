@@ -218,7 +218,7 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         axisPositionHandle = GLES20.glGetAttribLocation(axisProgram, "aPosition")
         axisColorHandle = GLES20.glGetAttribLocation(axisProgram, "aColor")
 
-        Matrix.setLookAtM(viewMatrix, 0, 0f, 8f, 16f, 0f, 0f, 0f, 0f, 1f, 0f)
+        Matrix.setLookAtM(viewMatrix, 0, 0f, 2f, 8f, 0f, 0f, 0f, 0f, 1f, 0f)
 
         Matrix.setIdentityM(rotationMatrix, 0)
         Matrix.setIdentityM(translateMatrix, 0)
@@ -339,6 +339,8 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     fun updatePoints(points: FloatArray) {
         synchronized(this) {
+            pointBuffer?.clear() // 如果 pointBuffer 是 FloatBuffer
+            pointCount = 0       // 重置點計數
             val maxRenderPoints = 500_000 // 設置最大渲染點數，例如 100 萬點
             val totalPoints = points.size / 7 // 每個點有 7 個 float
 
