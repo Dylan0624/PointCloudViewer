@@ -607,4 +607,19 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         log("Maximum render points set to: $maxRenderPoints")
     }
 
+    // 在 PointCloudRenderer.kt 中添加以下方法
+
+    fun adjustViewport(width: Int, height: Int) {
+        // 更新視圖比例
+        val ratio = width.toFloat() / height.toFloat()
+
+        // 更新投影矩陣
+        Matrix.perspectiveM(projectionMatrix, 0, 45f, ratio, 0.1f, 100f)
+
+        // 可能需要調整其他渲染參數，例如點的大小等
+
+        // 更新 MVP 矩陣
+        updateMVPMatrix()
+    }
+
 }

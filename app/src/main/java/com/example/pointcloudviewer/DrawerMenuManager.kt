@@ -14,7 +14,8 @@ class DrawerMenuManager(
     private val drawerLayout: DrawerLayout,
     private val renderer: PointCloudRenderer,
     private val legendView: LegendView,
-    private val udpManager: UDPManager
+    private val udpManager: UDPManager,
+    private var cameraToggleCallback: ((Boolean) -> Unit)? = null
 ) {
     @SuppressLint("WrongConstant", "UseSwitchCompatOrMaterialCode", "SetTextI18n", "ClickableViewAccessibility")
     fun setupDrawer() {
@@ -429,6 +430,38 @@ class DrawerMenuManager(
         val drawerContainer = FrameLayout(context).apply {
             layoutParams = drawerParams
         }
+        val cameraToggleLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+            setOnTouchListener { _, _ ->
+                drawerLayout.requestDisallowInterceptTouchEvent(true)
+                false
+            }
+        }
+        val cameraToggleLabel = TextView(context).apply {
+            text = "顯示相機畫面"
+            setTextColor(android.graphics.Color.BLACK)
+            setOnTouchListener { _, _ ->
+                drawerLayout.requestDisallowInterceptTouchEvent(true)
+                false
+            }
+        }
+        val cameraToggleSwitch = Switch(context).apply {
+            isChecked = false
+            setOnCheckedChangeListener { _, isChecked ->
+                cameraToggleCallback?.invoke(isChecked)
+            }
+            setOnTouchListener { _, _ ->
+                drawerLayout.requestDisallowInterceptTouchEvent(true)
+                false
+            }
+        }
+        cameraToggleLayout.addView(cameraToggleLabel)
+        cameraToggleLayout.addView(cameraToggleSwitch)
+        drawerContent.addView(cameraToggleLayout)
+
+
 
         // 先添加 ScrollView，再添加 touchBlocker
         drawerContainer.addView(scrollView)
@@ -461,5 +494,9 @@ class DrawerMenuManager(
                 }
             }
         })
+    }
+    // 添加一個方法用於註冊相機回調
+    fun setCameraToggleCallback(callback: (Boolean) -> Unit) {
+        cameraToggleCallback = callback
     }
 }
