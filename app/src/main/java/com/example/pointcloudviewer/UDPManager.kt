@@ -130,7 +130,7 @@ object UDPManager {
     private var glSurfaceView: GLSurfaceView? = null
     private var renderer: PointCloudRenderer? = null
     private var onDataRateUpdate: ((Double) -> Unit)? = null
-    private var echoMode = EchoMode.ECHO_MODE_2ND
+    private var echoMode = EchoMode.ECHO_MODE_1ST
     private var context: Context? = null
     private var isRendering = AtomicBoolean(false)
     private var validPacketsCount = 0

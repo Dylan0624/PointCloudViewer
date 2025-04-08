@@ -393,8 +393,8 @@ class DrawerMenuManager(
             }
             echoModeRadioGroup.addView(radioButton)
         }
-        // 設置默認選中項（初始為 ECHO_MODE_2ND，對應索引 1）
-        echoModeRadioGroup.check(1)
+        // 設置默認選中項（初始為 ECHO_MODE_1st，對應索引 0）
+        echoModeRadioGroup.check(0)
         echoModeLayout.addView(echoModeLabel)
         echoModeLayout.addView(echoModeRadioGroup)
         drawerContent.addView(echoModeLayout)
