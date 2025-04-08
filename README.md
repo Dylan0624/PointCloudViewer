@@ -62,7 +62,7 @@
 
 下圖展示了 LiDAR 數據從接收到渲染的完整處理流程：
 
-![docs/images/流程圖1.png](docs/images/流程圖.png)
+![docs/images/流程圖1.png](docs/images/流程圖1.png)
 
 ### 數據處理機制
 
