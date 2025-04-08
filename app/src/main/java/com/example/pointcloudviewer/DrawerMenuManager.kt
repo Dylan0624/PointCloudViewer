@@ -182,9 +182,9 @@ class DrawerMenuManager(
                 drawerLayout.requestDisallowInterceptTouchEvent(true)
             }
         }
-        colorModeLayout.addView(colorModeLabel)
-        colorModeLayout.addView(colorModeSpinner)
-        drawerContent.addView(colorModeLayout)
+//        colorModeLayout.addView(colorModeLabel)
+//        colorModeLayout.addView(colorModeSpinner)
+//        drawerContent.addView(colorModeLayout)
 
         // 最大渲染點數選擇
         val maxPointsLayout = LinearLayout(context).apply {
@@ -271,7 +271,7 @@ class DrawerMenuManager(
                 false
             }
         }
-        drawerContent.addView(resetButton)
+//        drawerContent.addView(resetButton)
 
         // 強度過濾開關
         val intensityFilterLayout = LinearLayout(context).apply {
@@ -301,9 +301,9 @@ class DrawerMenuManager(
                 false
             }
         }
-        intensityFilterLayout.addView(intensityFilterLabel)
-        intensityFilterLayout.addView(intensityFilterSwitch)
-        drawerContent.addView(intensityFilterLayout)
+//        intensityFilterLayout.addView(intensityFilterLabel)
+//        intensityFilterLayout.addView(intensityFilterSwitch)
+//        drawerContent.addView(intensityFilterLayout)
 
         // 點數比例控制
         val pointsRatioLayout = LinearLayout(context).apply {
@@ -344,9 +344,9 @@ class DrawerMenuManager(
                 false
             }
         }
-        pointsRatioLayout.addView(pointsRatioLabel)
-        pointsRatioLayout.addView(pointsRatioSeekBar)
-        drawerContent.addView(pointsRatioLayout)
+//        pointsRatioLayout.addView(pointsRatioLabel)
+//        pointsRatioLayout.addView(pointsRatioSeekBar)
+//        drawerContent.addView(pointsRatioLayout)
 
         // 新增 Echo Mode 選擇（按照 1、2、All 順序）
         val echoModeLayout = LinearLayout(context).apply {
