@@ -53,10 +53,11 @@ class MainActivity : AppCompatActivity() {
         val mainContent = ConstraintLayout(this)
         mainContent.id = View.generateViewId()
 
-        // 初始化 GLSurfaceView 為全屏
+        // 修改為以下代碼
         glSurfaceView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             renderer = PointCloudRenderer()
+            renderer.setGLSurfaceView(this) // 設置 GLSurfaceView 引用到渲染器中
             setRenderer(renderer)
             renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
             id = View.generateViewId()

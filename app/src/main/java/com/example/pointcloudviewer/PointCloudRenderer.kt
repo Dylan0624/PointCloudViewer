@@ -33,6 +33,9 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
     private var colorMode: Int = 0 // 0: 強度, 1: 深度, 2: 顏色
     var displayRatio: Float = 1.0f // 顯示點雲比例
 
+    // 添加一個 GLSurfaceView 的引用，用於請求重繪
+    private var glSurfaceView: GLSurfaceView? = null
+
     private val pointSize = 1.0f
     private var distanceScale = 1.5f
 
@@ -137,6 +140,11 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         Matrix.setIdentityM(scaleMatrix, 0)
         createGrid(-10f, 10f, 1f)
         createAxis()
+    }
+
+    // 添加設置 GLSurfaceView 的方法
+    fun setGLSurfaceView(view: GLSurfaceView) {
+        this.glSurfaceView = view
     }
 
     private fun createGrid(min: Float, max: Float, step: Float): FloatBuffer {
@@ -545,12 +553,24 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         resetTransformation()
     }
 
+    // 修改方法以請求重繪
     fun setAxisVisibility(visible: Boolean) {
-        showAxis = visible
+        if (showAxis != visible) {
+            showAxis = visible
+            // 請求重繪
+            glSurfaceView?.requestRender()
+            log("Axis visibility changed to: $visible")
+        }
     }
 
+    // 修改方法以請求重繪
     fun setGridVisibility(visible: Boolean) {
-        showGrid = visible
+        if (showGrid != visible) {
+            showGrid = visible
+            // 請求重繪
+            glSurfaceView?.requestRender()
+            log("Grid visibility changed to: $visible")
+        }
     }
 
     fun setColorMode(mode: Int) {
@@ -561,6 +581,8 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
 
     fun toggleGrid(): Boolean {
         showGrid = !showGrid
+        // 請求重繪
+        glSurfaceView?.requestRender()
         log("Grid visibility: $showGrid")
         return showGrid
     }
