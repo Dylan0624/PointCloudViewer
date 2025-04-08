@@ -425,7 +425,6 @@ class DrawerMenuManager(
                 false // 繼續讓下層處理
             }
         }
-
         // 創建一個 FrameLayout 來包裹 ScrollView 和 touchBlocker
         val drawerContainer = FrameLayout(context).apply {
             layoutParams = drawerParams
