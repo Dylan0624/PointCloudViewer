@@ -241,7 +241,7 @@ class PointCloudRenderer : GLSurfaceView.Renderer {
         axisPositionHandle = GLES20.glGetAttribLocation(axisProgram, "aPosition")
         axisColorHandle = GLES20.glGetAttribLocation(axisProgram, "aColor")
 
-        Matrix.setLookAtM(viewMatrix, 0, 0f, 2f, 8f, 0f, 0f, 0f, 0f, 1f, 0f)
+        Matrix.setLookAtM(viewMatrix, 0, 0f, 0.8f, 1f, 0f, 0.5f, 0f, 0f, 4f, 0f)
 
         Matrix.setIdentityM(rotationMatrix, 0)
         Matrix.setIdentityM(translateMatrix, 0)
