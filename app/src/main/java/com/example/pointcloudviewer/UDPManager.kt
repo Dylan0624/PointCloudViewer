@@ -45,12 +45,12 @@ object UDPManager {
         const val HEADER_SIZE = 32
         const val DATA_SIZE = 784
         const val PACKET_SIZE = 816
-        const val POINTS_PER_PACKET = 260
-        const val TOTAL_POINTS_PER_LINE = 520
+        var POINTS_PER_PACKET = 260  // 改為 var
+        var TOTAL_POINTS_PER_LINE = 520  // 改為 var
+        var LINES_PER_FRAME = 2000  // 改為 var
         val HEADER_MAGIC = byteArrayOf(0x55.toByte(), 0xaa.toByte(), 0x5a.toByte(), 0xa5.toByte())
         const val HEADER_START_OFFSET = 0
         const val DATA_START_OFFSET = 32
-        const val LINES_PER_FRAME = 2000
         const val AZIMUTH_RESOLUTION = 0.0439f
         const val ELEVATION_START_UPPER = 12.975f
         const val ELEVATION_START_LOWER = -0.025f
@@ -184,7 +184,60 @@ object UDPManager {
             }
         }
     }
+    // 修改 getter 和 setter 方法直接操作 LidarConstants 的屬性
+    fun setTotalPointsPerLine(value: Int) {
+        LidarConstants.TOTAL_POINTS_PER_LINE = value.coerceIn(100, 1000) // 設定合理範圍
+        log("Total points per line updated to: ${LidarConstants.TOTAL_POINTS_PER_LINE}")
+    }
 
+    fun setLinesPerFrame(value: Int) {
+        LidarConstants.LINES_PER_FRAME = value.coerceIn(500, 5000) // 設定合理範圍
+        log("Lines per frame updated to: ${LidarConstants.LINES_PER_FRAME}")
+    }
+
+    fun getTotalPointsPerLine(): Int {
+        return LidarConstants.TOTAL_POINTS_PER_LINE
+    }
+
+    fun getLinesPerFrame(): Int {
+        return LidarConstants.LINES_PER_FRAME
+    }
+
+    fun setPointsPerPacket(value: Int) {
+        LidarConstants.POINTS_PER_PACKET = value.coerceIn(100, 500) // 設定合理範圍
+        log("Points per packet updated to: ${LidarConstants.POINTS_PER_PACKET}")
+    }
+
+    fun getPointsPerPacket(): Int {
+        return LidarConstants.POINTS_PER_PACKET
+    }
+    fun resetUDPReceiver() {
+        log("Resetting UDP receiver with new parameters...")
+
+        // 停止當前 Job
+        udpJob?.cancel()
+        processingJob?.cancel()
+
+        // 清空隊列和緩衝區
+        packetQueue.clear()
+        nextFrame.clear()
+        frameBuffer.forEach { it.clear() }
+
+        // 重置變數
+        resetFrameTracking()
+
+        // 重新初始化容量
+        repeat(frameBufferSize) {
+            frameBuffer[it] = ArrayList<LidarPoint>(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME / frameBufferSize)
+        }
+        nextFrame.ensureCapacity(LidarConstants.TOTAL_POINTS_PER_LINE * LidarConstants.LINES_PER_FRAME)
+
+        // 重新啟動
+        udpJob = startUdpReceiver()
+        processingJob = startPacketProcessor()
+
+        log("UDP receiver reset with new parameters: TPPL=${LidarConstants.TOTAL_POINTS_PER_LINE}, LPF=${LidarConstants.LINES_PER_FRAME}, PPP=${LidarConstants.POINTS_PER_PACKET}")
+    }
     fun setEchoMode(mode: EchoMode) {
         echoMode = mode
     }

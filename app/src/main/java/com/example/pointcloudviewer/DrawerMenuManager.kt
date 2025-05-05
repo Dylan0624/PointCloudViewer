@@ -2,6 +2,7 @@ package com.example.pointcloudviewer
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -144,48 +145,6 @@ class DrawerMenuManager(
         legendSwitchLayout.addView(legendSwitch)
         drawerContent.addView(legendSwitchLayout)
 
-        // 色彩模式選擇
-        val colorModeLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 8, 0, 8)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val colorModeLabel = TextView(context).apply {
-            text = "色彩模式"
-            setTextColor(android.graphics.Color.BLACK)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val colorModeSpinner = Spinner(context).apply {
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val colorModes = arrayOf("強度", "深度", "顏色")
-        val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, colorModes)
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        colorModeSpinner.adapter = adapter
-        colorModeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>, view: View?, position: Int, id: Long) {
-                renderer.setColorMode(position)
-                legendView.mode = position
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-            }
-            override fun onNothingSelected(parent: AdapterView<*>) {
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-            }
-        }
-//        colorModeLayout.addView(colorModeLabel)
-//        colorModeLayout.addView(colorModeSpinner)
-//        drawerContent.addView(colorModeLayout)
-
         // 最大渲染點數選擇
         val maxPointsLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -258,96 +217,6 @@ class DrawerMenuManager(
         maxPointsLayout.addView(maxPointsSpinner)
         drawerContent.addView(maxPointsLayout)
 
-        // 重置視圖按鈕
-        val resetButton = Button(context).apply {
-            text = "重置視圖"
-            setOnClickListener {
-                renderer.resetView()
-                drawerLayout.closeDrawer(GravityCompat.START)
-            }
-            setPadding(0, 8, 0, 8)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-//        drawerContent.addView(resetButton)
-
-        // 強度過濾開關
-        val intensityFilterLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 8, 0, 8)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val intensityFilterLabel = TextView(context).apply {
-            text = "啟用強度過濾"
-            setTextColor(android.graphics.Color.BLACK)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val intensityFilterSwitch = Switch(context).apply {
-            isChecked = false
-            setOnCheckedChangeListener { _, isChecked ->
-                udpManager.setIntensityFilterEnabled(isChecked)
-            }
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-//        intensityFilterLayout.addView(intensityFilterLabel)
-//        intensityFilterLayout.addView(intensityFilterSwitch)
-//        drawerContent.addView(intensityFilterLayout)
-
-        // 點數比例控制
-        val pointsRatioLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 8, 0, 8)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val pointsRatioLabel = TextView(context).apply {
-            text = "顯示點數比例 (強度過濾): 100%"
-            setTextColor(android.graphics.Color.BLACK)
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-        val pointsRatioSeekBar = SeekBar(context).apply {
-            max = 100
-            progress = 100
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val ratio = progress / 100.0f
-                    udpManager.setDisplayRatio(ratio)
-                    pointsRatioLabel.text = "顯示點數比例 (強度過濾): ${progress}%"
-                    drawerLayout.requestDisallowInterceptTouchEvent(true)
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {
-                    drawerLayout.requestDisallowInterceptTouchEvent(true)
-                }
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                    drawerLayout.requestDisallowInterceptTouchEvent(true)
-                }
-            })
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false
-            }
-        }
-//        pointsRatioLayout.addView(pointsRatioLabel)
-//        pointsRatioLayout.addView(pointsRatioSeekBar)
-//        drawerContent.addView(pointsRatioLayout)
-
         // 新增 Echo Mode 選擇（按照 1、2、All 順序）
         val echoModeLayout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -399,36 +268,7 @@ class DrawerMenuManager(
         echoModeLayout.addView(echoModeRadioGroup)
         drawerContent.addView(echoModeLayout)
 
-        // 將所有內容加入到ScrollView中
-        scrollView.addView(drawerContent)
-
-        // 設置抽屜布局參數
-        val drawerParams = DrawerLayout.LayoutParams(
-            DrawerLayout.LayoutParams.WRAP_CONTENT,
-            DrawerLayout.LayoutParams.MATCH_PARENT
-        ).apply {
-            gravity = Gravity.START
-        }
-        scrollView.layoutParams = drawerParams
-
-        // 添加空白 View 作為觸摸事件捕捉器，覆蓋整個抽屜區域
-        val touchBlocker = View(context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            // 設置透明背景
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            // 攔截所有觸摸事件
-            setOnTouchListener { _, _ ->
-                drawerLayout.requestDisallowInterceptTouchEvent(true)
-                false // 繼續讓下層處理
-            }
-        }
-        // 創建一個 FrameLayout 來包裹 ScrollView 和 touchBlocker
-        val drawerContainer = FrameLayout(context).apply {
-            layoutParams = drawerParams
-        }
+        // 相機開關
         val cameraToggleLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -460,7 +300,189 @@ class DrawerMenuManager(
         cameraToggleLayout.addView(cameraToggleSwitch)
         drawerContent.addView(cameraToggleLayout)
 
+        // 添加分隔線
+        val separator = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                2
+            )
+            setBackgroundColor(android.graphics.Color.parseColor("#FFFFFF"))
+        }
+        drawerContent.addView(separator)
 
+        // 添加 UDP 參數標題
+        val udpParamsTitle = TextView(context).apply {
+            text = "LiDAR 數據參數設定"
+            setTextColor(android.graphics.Color.parseColor("#0055AA"))
+            textSize = 16f
+            setPadding(0, 16, 0, 8)
+        }
+        drawerContent.addView(udpParamsTitle)
+
+        // 創建輸入框來保持引用
+        var pointsPerPacketEditText: EditText? = null
+        var pointsPerLineEditText: EditText? = null
+
+        // 每包點數參數（使用EditText取代SeekBar）
+        val pointsPerPacketLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        val pointsPerPacketLabel = TextView(context).apply {
+            text = "每包點數: "
+            setTextColor(android.graphics.Color.BLACK)
+        }
+        pointsPerPacketEditText = EditText(context).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(udpManager.getPointsPerPacket().toString())
+            setTextColor(android.graphics.Color.BLACK) // 設置文字顏色為黑色
+            setHintTextColor(android.graphics.Color.GRAY) // 設置提示文字顏色為灰色
+            layoutParams = LinearLayout.LayoutParams(
+                150, // 固定寬度
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            // 當每包點數改變時，自動計算並更新每行點數
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    val newPointsPerPacket = text.toString().toIntOrNull() ?: udpManager.getPointsPerPacket()
+                    // 每行點數 = 每包點數 × 2
+                    val newPointsPerLine = newPointsPerPacket * 2
+                    pointsPerLineEditText?.setText(newPointsPerLine.toString())
+                    udpManager.setPointsPerPacket(newPointsPerPacket)
+                    udpManager.setTotalPointsPerLine(newPointsPerLine)
+                }
+            }
+        }
+        pointsPerPacketLayout.addView(pointsPerPacketLabel)
+        pointsPerPacketLayout.addView(pointsPerPacketEditText)
+        drawerContent.addView(pointsPerPacketLayout)
+
+        // 每行點數參數（使用EditText取代SeekBar）
+        val pointsPerLineLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        val pointsPerLineLabel = TextView(context).apply {
+            text = "每行點數: "
+            setTextColor(android.graphics.Color.BLACK)
+        }
+        pointsPerLineEditText = EditText(context).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(udpManager.getTotalPointsPerLine().toString())
+            setTextColor(android.graphics.Color.BLACK) // 設置文字顏色為黑色
+            setHintTextColor(android.graphics.Color.GRAY) // 設置提示文字顏色為灰色
+            layoutParams = LinearLayout.LayoutParams(
+                150, // 固定寬度
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            // 當每行點數改變時，自動計算並更新每包點數
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    val newPointsPerLine = text.toString().toIntOrNull() ?: udpManager.getTotalPointsPerLine()
+                    // 每包點數 = 每行點數 ÷ 2
+                    val newPointsPerPacket = newPointsPerLine / 2
+                    pointsPerPacketEditText?.setText(newPointsPerPacket.toString())
+                    udpManager.setTotalPointsPerLine(newPointsPerLine)
+                    udpManager.setPointsPerPacket(newPointsPerPacket)
+                }
+            }
+        }
+        pointsPerLineLayout.addView(pointsPerLineLabel)
+        pointsPerLineLayout.addView(pointsPerLineEditText)
+        drawerContent.addView(pointsPerLineLayout)
+
+        // 每幀行數參數（使用EditText取代SeekBar）
+        val linesPerFrameLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        val linesPerFrameLabel = TextView(context).apply {
+            text = "每幀行數: "
+            setTextColor(android.graphics.Color.BLACK)
+        }
+        val linesPerFrameEditText = EditText(context).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(udpManager.getLinesPerFrame().toString())
+            setTextColor(android.graphics.Color.BLACK) // 設置文字顏色為黑色
+            setHintTextColor(android.graphics.Color.GRAY) // 設置提示文字顏色為灰色
+            layoutParams = LinearLayout.LayoutParams(
+                150, // 固定寬度
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    val newLinesPerFrame = text.toString().toIntOrNull() ?: udpManager.getLinesPerFrame()
+                    udpManager.setLinesPerFrame(newLinesPerFrame)
+                }
+            }
+        }
+        linesPerFrameLayout.addView(linesPerFrameLabel)
+        linesPerFrameLayout.addView(linesPerFrameEditText)
+        drawerContent.addView(linesPerFrameLayout)
+
+        // 添加說明文字
+        val infoText = TextView(context).apply {
+            text = "提示：每行點數 = 每包點數 × 2"
+            setTextColor(android.graphics.Color.GRAY)
+            textSize = 12f
+            setPadding(0, 8, 0, 16)
+        }
+        drawerContent.addView(infoText)
+
+        // 添加重置按鈕
+        val resetButton = Button(context).apply {
+            text = "應用參數變更"
+            setPadding(16, 8, 16, 8)
+            setOnClickListener {
+                // 確保所有值都已更新
+                val pointsPerPacket = pointsPerPacketEditText?.text.toString().toIntOrNull() ?: udpManager.getPointsPerPacket()
+                val pointsPerLine = pointsPerLineEditText?.text.toString().toIntOrNull() ?: udpManager.getTotalPointsPerLine()
+                val linesPerFrame = linesPerFrameEditText.text.toString().toIntOrNull() ?: udpManager.getLinesPerFrame()
+
+                udpManager.setPointsPerPacket(pointsPerPacket)
+                udpManager.setTotalPointsPerLine(pointsPerLine)
+                udpManager.setLinesPerFrame(linesPerFrame)
+
+                udpManager.resetUDPReceiver()
+                Toast.makeText(context, "已套用新參數設定", Toast.LENGTH_SHORT).show()
+                drawerLayout.closeDrawer(GravityCompat.START)
+            }
+        }
+        drawerContent.addView(resetButton)
+
+        // 將所有內容加入到ScrollView中
+        scrollView.addView(drawerContent)
+
+        // 設置抽屜布局參數
+        val drawerParams = DrawerLayout.LayoutParams(
+            DrawerLayout.LayoutParams.WRAP_CONTENT,
+            DrawerLayout.LayoutParams.MATCH_PARENT
+        ).apply {
+            gravity = Gravity.START
+        }
+        scrollView.layoutParams = drawerParams
+
+        // 添加空白 View 作為觸摸事件捕捉器，覆蓋整個抽屜區域
+        val touchBlocker = View(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            // 設置透明背景
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            // 攔截所有觸摸事件
+            setOnTouchListener { _, _ ->
+                drawerLayout.requestDisallowInterceptTouchEvent(true)
+                false // 繼續讓下層處理
+            }
+        }
+        // 創建一個 FrameLayout 來包裹 ScrollView 和 touchBlocker
+        val drawerContainer = FrameLayout(context).apply {
+            layoutParams = drawerParams
+        }
 
         // 先添加 ScrollView，再添加 touchBlocker
         drawerContainer.addView(scrollView)
@@ -494,6 +516,7 @@ class DrawerMenuManager(
             }
         })
     }
+
     // 添加一個方法用於註冊相機回調
     fun setCameraToggleCallback(callback: (Boolean) -> Unit) {
         cameraToggleCallback = callback
